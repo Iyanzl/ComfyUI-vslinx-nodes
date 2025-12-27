@@ -1,5 +1,5 @@
 # ComfyUI-vslinx-nodes
-A set of custom nodes for ComfyUI that make workflows easier: load multiple images via a multi-select dialog with preview. The images are instantly uploaded to the input folder and can be output either as a list or a batch. It also includes boolean AND and OR operators as well as a boolean flip for easy workflow branching, along with nodes to bypass or mute other nodes based on a boolean value. Includes a ``Fit Image into BBox Mask`` node as well, that precisely fits and places an image into a masked region’s bounding box — ideal for compositing poses, objects, or partial elements into existing images with preserved aspect ratio and alignment options. Furthermore includes a bridge to connect a rgthree power lora loader to the image saver to persist lora information in metadata.
+Custom ComfyUI nodes to streamline workflows: load multiple images via a multi-select dialog with preview; images upload instantly to the input folder and can be output as a list or a batch. Includes boolean AND/OR plus a boolean flip for easy branching, and nodes that bypass or mute other nodes based on a boolean value. Also includes “Fit Image into BBox Mask” to precisely fit/place an image into a mask region’s bounding box—ideal for compositing poses, objects, or partial elements—while preserving aspect ratio and offering alignment options. Adds a bridge from rgthree Power LoRA Loader to the image saver to store LoRA info in metadata, plus settings to show previews of all models & LoRAs across all model loaders - compatible with rgthree's subdirectory view.
 
 ## How to Install
 ### **Recommended**
@@ -11,6 +11,41 @@ A set of custom nodes for ComfyUI that make workflows easier: load multiple imag
   ```
   git clone https://github.com/vslinx/ComfyUI-vslinx-nodes.git comfyui-vslinx-nodes
   ```
+
+## Settings
+#### Show hover previews in all model dropdowns
+When enabled, this feature shows a preview for the model you’re hovering with your mouse.  
+It works across **all model / LoRA loaders** and supports **`.safetensors`**, **`.ckpt`**, **`.pt`**, and **`.gguf`** files located in these folders:
+
+- `loras`
+- `checkpoints`
+- `unet`
+- `diffusion_models`
+
+It is also compatible with the **[rgthree-comfy](https://github.com/rgthree/rgthree-comfy)** node’s **“Auto Nest Subdirectories in Menus”** setting. A feature that often breaks preview behavior when combined with other custom nodes (e.g. **[ComfyUI-Custom-Scripts](https://github.com/pythongosssss/ComfyUI-Custom-Scripts)**).
+
+Preview files must be placed **in the same folder as the model** and use the **same base filename**.
+
+Supported formats:
+
+**Images**
+- `png`
+- `jpg`
+- `jpeg`
+- `webp`
+
+**Videos**
+- `mp4`
+- `webm`
+
+The extension will look for previews using the most common naming schemes:
+- `ModelName.png` / `ModelName.webm` / etc.
+- `ModelName.preview.png` / `ModelName.preview.webm` / etc.
+
+Compatible with well-known ComfyUI custom nodes/plugins that save metadata and/or previews, such as  
+**[ComfyUI-Lora-Manager](https://github.com/willmiao/ComfyUI-Lora-Manager)**.
+
+<img width="549" height="678" alt="Image" src="https://github.com/user-attachments/assets/2fbfb270-562c-48f5-a9a5-19062410da7e" />
 
 ## Nodes
 
