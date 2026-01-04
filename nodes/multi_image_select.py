@@ -1,4 +1,4 @@
-import os, json
+import os, json, re
 from typing import List, Tuple
 import numpy as np
 from PIL import Image, ImageOps
@@ -74,12 +74,32 @@ def _fail_if_needed(existing_count: int, missing: List[str], fail_if_empty: bool
             f"{node_name}: No valid images found. They may have been moved or deleted from the input folder.{hint}"
         )
 
+FILENAME_HANDLING_OPTIONS = ("full filename", "deduped filename")
+
+def _name_for_output(abs_path: str, handling: str) -> str:
+    """
+    Returns the basename WITHOUT extension per handling.
+      - 'full filename'    -> stem as-is
+      - 'deduped filename' -> stem with ONLY trailing ' (digits)' removed
+                              (space + parentheses). Legitimate 'name(2)' is kept.
+    """
+    base = os.path.basename(abs_path)
+    stem, _ext = os.path.splitext(base)
+
+    if handling == "deduped filename":
+        stem = re.sub(r"\s+\(\d+\)$", "", stem)
+
+    return stem
+
 class VSLinx_LoadSelectedImagesList:
     """
-    Reads files listed in `selected_paths` (relative to ComfyUI input dir)
-    and outputs an IMAGE **list** where each item is BHWC with B=1.
+    Reads files listed in `selected_paths` and outputs:
+      - IMAGE list (each item BHWC with B=1)
+      - STRING list of filenames (without extension), per 'filename_handling'.
     """
-    DESCRIPTION = "Provides a simple node with a “Select Images” button that lets you choose one or multiple images. After selection, the images are uploaded to your input folder in ComfyUI (the same behavior as the default Load Image node). The node also includes a preview of the selected images. The images are returned as an image list, allowing downstream nodes to process them one after another."
+    DESCRIPTION = ("Provides a simple node with a “Select Images” button that lets you choose one or multiple images. "
+                   "After selection, the images are uploaded to your input folder in ComfyUI (same as core). "
+                   "Returns images as a list and a parallel list of filenames (no extension).")
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -91,16 +111,23 @@ class VSLinx_LoadSelectedImagesList:
                     "placeholder": "Filled by the 'Select images' button (JSON array)."
                 }),
                 "fail_if_empty": ("BOOLEAN", {"default": True}),
+                "filename_handling": (FILENAME_HANDLING_OPTIONS, {"default": "full filename"}),
             },
         }
 
-    RETURN_TYPES = ("IMAGE",)
-    RETURN_NAMES = ("images",)
-    OUTPUT_IS_LIST = (True,)
+    RETURN_TYPES = ("IMAGE", "STRING")
+    RETURN_NAMES = ("images", "filenames")
+    OUTPUT_IS_LIST = (True, True)
     FUNCTION = "load"
     CATEGORY = "vsLinx/image"
 
-    def load(self, selected_paths: str = "", fail_if_empty: bool = True, **kwargs):
+    def load(
+        self,
+        selected_paths: str = "",
+        fail_if_empty: bool = True,
+        filename_handling: str = "full filename",
+        **kwargs
+    ):
         if not selected_paths:
             selected_paths = kwargs.get("selected_paths", "")
 
@@ -109,32 +136,35 @@ class VSLinx_LoadSelectedImagesList:
 
         if not rels:
             _fail_if_needed(0, [], fail_if_empty, "Load (Multiple) Images (List)")
-            return ([],)
+            return ([], [])
 
         existing, missing = _resolve_existing(rels)
         _fail_if_needed(len(existing), missing, fail_if_empty, "Load (Multiple) Images (List)")
 
-        images = []
+        images: List[torch.Tensor] = []
+        names: List[str] = []
         for abs_path in existing:
             try:
-                img = Image.open(abs_path)
-                images.append(_pil_to_tensor_bhwc(img))
+                pil = Image.open(abs_path)
+                images.append(_pil_to_tensor_bhwc(pil))
+                names.append(_name_for_output(abs_path, filename_handling))
             except Exception as e:
                 print(f"[vsLinx_LoadSelectedImagesList] skip {abs_path}: {e}")
 
         if not images:
             _fail_if_needed(0, rels, fail_if_empty, "Load (Multiple) Images (List)")
-            return ([],)
+            return ([], [])
 
-        return (images,)
+        return (images, names)
 
 class VSLinx_LoadSelectedImagesBatch:
     """
-    Same as above, but returns a single **batched** IMAGE tensor (B, H, W, 3).
-    All images are resized to the first image's size to ensure a valid batch.
+    Returns a batched IMAGE tensor (B,H,W,3) and a single comma-separated
+    STRING of filenames (without extension) per 'filename_handling'.
+    All images are resized to the first image's size for a valid batch.
     """
-    DESCRIPTION = "Provides a simple node with a “Select Images” button that lets you choose one or multiple images. After selection, the images are uploaded to your input folder in ComfyUI (the same behavior as the default Load Image node). The node also includes a preview of the selected images. The images are returned as a batch, allowing downstream nodes to process them together."
-
+    DESCRIPTION = ("Provides a simple node with a “Select Images” button for multiple selection. "
+                   "Returns an image batch and a comma-separated filenames string (no extension).")
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -146,15 +176,22 @@ class VSLinx_LoadSelectedImagesBatch:
                     "placeholder": "Filled by the 'Select images' button (JSON array)."
                 }),
                 "fail_if_empty": ("BOOLEAN", {"default": True}),
+                "filename_handling": (FILENAME_HANDLING_OPTIONS, {"default": "full filename"}),
             },
         }
 
-    RETURN_TYPES = ("IMAGE",)
-    RETURN_NAMES = ("images",)
+    RETURN_TYPES = ("IMAGE", "STRING")
+    RETURN_NAMES = ("images", "filenames")
     FUNCTION = "load_batch"
     CATEGORY = "vsLinx/image"
 
-    def load_batch(self, selected_paths: str = "", fail_if_empty: bool = True, **kwargs):
+    def load_batch(
+        self,
+        selected_paths: str = "",
+        fail_if_empty: bool = True,
+        filename_handling: str = "full filename",
+        **kwargs
+    ):
         if not selected_paths:
             selected_paths = kwargs.get("selected_paths", "")
 
@@ -164,22 +201,24 @@ class VSLinx_LoadSelectedImagesBatch:
         if not rels:
             _fail_if_needed(0, [], fail_if_empty, "Load (Multiple) Images (Batch)")
             empty = torch.zeros((0, 64, 64, 3), dtype=torch.float32)
-            return (empty,)
+            return (empty, "")
 
         existing, missing = _resolve_existing(rels)
         _fail_if_needed(len(existing), missing, fail_if_empty, "Load (Multiple) Images (Batch)")
 
         pil_images: List[Image.Image] = []
+        names: List[str] = []
         for abs_path in existing:
             try:
                 pil_images.append(Image.open(abs_path))
+                names.append(_name_for_output(abs_path, filename_handling))
             except Exception as e:
                 print(f"[vsLinx_LoadSelectedImagesBatch] skip {abs_path}: {e}")
 
         if not pil_images:
             _fail_if_needed(0, rels, fail_if_empty, "Load (Multiple) Images (Batch)")
             empty = torch.zeros((0, 64, 64, 3), dtype=torch.float32)
-            return (empty,)
+            return (empty, "")
 
         W0, H0 = pil_images[0].size
         pil_images = [_resize_like(im, W0, H0) for im in pil_images]
@@ -187,7 +226,8 @@ class VSLinx_LoadSelectedImagesBatch:
         tensors = [_pil_to_tensor_bhwc(im) for im in pil_images]
         batch = torch.cat(tensors, dim=0)
 
-        return (batch,)
+        filenames_str = ", ".join(names)
+        return (batch, filenames_str)
 
 NODE_CLASS_MAPPINGS = {
     "vsLinx_LoadSelectedImagesList": VSLinx_LoadSelectedImagesList,
