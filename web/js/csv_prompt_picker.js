@@ -11,8 +11,8 @@ function toast(severity, summary, detail, life = 3000) {
   }
   const fn =
     severity === "error" ? console.error :
-    severity === "warn" ? console.warn :
-    console.log;
+      severity === "warn" ? console.warn :
+        console.log;
   fn(`[${summary}] ${detail}`);
 }
 
@@ -81,6 +81,43 @@ function drawSmallX(ctx, x, y, w, h, color = "#e05555") {
   ctx.lineTo(x0, y1);
   ctx.stroke();
   ctx.restore();
+}
+
+function drawHoverOverlay(ctx, x, y, w, h, danger = false) {
+  if (w <= 2 || h <= 2) return;
+  ctx.save();
+  ctx.globalAlpha = danger ? 0.10 : 0.08;
+  ctx.fillStyle = danger ? "#e05555" : "#ffffff";
+  roundRectPath(ctx, x + 1, y + 1, w - 2, h - 2, 6);
+  ctx.fill();
+
+  ctx.globalAlpha = danger ? 0.22 : 0.16;
+  ctx.strokeStyle = danger ? "#e05555" : "#ffffff";
+  ctx.lineWidth = 1;
+  roundRectPath(ctx, x + 1, y + 1, w - 2, h - 2, 6);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function setCanvasCursor(cursor) {
+  try {
+    const c = app?.canvas?.canvas;
+    if (c) c.style.cursor = cursor || "";
+  } catch (_) { }
+}
+
+let vslinxHoverNode = null;
+
+function clearHoverOnNode(node) {
+  if (!node) return;
+  let changed = false;
+  for (const w of (node.widgets || [])) {
+    if (w?.value?.type === "CsvRowWidget" && w._hover) {
+      w._hover = null;
+      changed = true;
+    }
+  }
+  if (changed) node.setDirtyCanvas(true, true);
 }
 
 async function uploadPromptFile(file, mode = "auto", rename_to = null) {
@@ -418,7 +455,7 @@ function recomputeNodeSize(node) {
       node.size[0] = Math.max(node.size[0], computed[0]);
       node.size[1] = Math.max(80, computed[1]);
     }
-  } catch (_) {}
+  } catch (_) { }
 }
 
 const LIST_TOP_SPACER_ID = "vslinx_list_top_spacer";
@@ -453,7 +490,7 @@ function ensureListTopSpacer(node, height = 10) {
     serialize: false,
     serializeValue() { return undefined; },
     computeSize() { return [0, height]; },
-    draw() {},
+    draw() { },
   };
 
   node.addCustomWidget(spacer);
@@ -472,7 +509,7 @@ function ensureButtonSpacer(node, height = 10) {
     serialize: false,
     serializeValue() { return undefined; },
     computeSize() { return [0, height]; },
-    draw() {},
+    draw() { },
   };
 
   node.addCustomWidget(spacer);
@@ -580,6 +617,8 @@ class CsvRowWidget {
     this.value = { type: "CsvRowWidget", file: "", key: "(None)" };
     this._labels = [];
     this._map = {};
+    this._hover = null;
+    this._rowY = null;
     this._bounds = {
       file: [0, 0, 0, 0],
       remove: [0, 0, 0, 0],
@@ -651,7 +690,20 @@ class CsvRowWidget {
     node.setDirtyCanvas(true, true);
   }
 
+  _hitPart(pos) {
+    const x = pos[0];
+    const y = pos[1];
+    const inRect = (r) => x >= r[0] && x <= r[0] + r[2] && y >= r[1] && y <= r[1] + r[3];
+
+    if (inRect(this._bounds.remove)) return "remove";
+    if (inRect(this._bounds.file)) return "file";
+    if (inRect(this._bounds.sel)) return "sel";
+    return null;
+  }
+
   draw(ctx, node, _width, y) {
+    this._rowY = y;
+
     const height = ROW_HEIGHT;
 
     const x = LIST_SIDE_MARGIN;
@@ -702,6 +754,10 @@ class CsvRowWidget {
     ctx.lineTo(outX, botY + botH - 3);
     ctx.stroke();
 
+    if (this._hover === "file") drawHoverOverlay(ctx, fileX, topY, fileW, topH, false);
+    else if (this._hover === "remove") drawHoverOverlay(ctx, remX, topY, removeW, topH, true);
+    else if (this._hover === "sel") drawHoverOverlay(ctx, selX, botY, selW, botH, false);
+
     ctx.globalAlpha = 1.0;
     ctx.fillStyle = LiteGraph.WIDGET_TEXT_COLOR;
 
@@ -711,8 +767,8 @@ class CsvRowWidget {
 
     ctx.textAlign = "left";
     ctx.textBaseline = "middle";
-
     ctx.font = prevFont;
+
     const fileMid = topY + topH / 2;
     drawClippedText(ctx, this.value.file || "(click to choose file)", fileX, fileMid, fileW, topH);
 
@@ -744,24 +800,25 @@ class CsvRowWidget {
   }
 
   mouse(event, pos, node) {
-    const isLeftClick = event.type === "pointerdown" && event.button === 0;
+    const isLeftClick =
+      (event.type === "pointerdown" || event.type === "mousedown") &&
+      event.button === 0;
+
     if (!isLeftClick) return false;
 
-    const x = pos[0];
-    const y = pos[1];
-    const inRect = (r) => x >= r[0] && x <= r[0] + r[2] && y >= r[1] && y <= r[1] + r[3];
+    const part = this._hitPart(pos);
 
-    if (inRect(this._bounds.remove)) {
+    if (part === "remove") {
       this._handleRemove(node);
       return true;
     }
 
-    if (inRect(this._bounds.file)) {
+    if (part === "file") {
       this._handlePickFile(node);
       return true;
     }
 
-    if (inRect(this._bounds.sel)) {
+    if (part === "sel") {
       if (!this.value.file) return true;
 
       const items = (this._labels || []).map((label) => ({
@@ -786,6 +843,82 @@ app.registerExtension({
     if (node.comfyClass !== NODE_NAME) return;
 
     node.serialize_widgets = true;
+
+    if (!app.canvas._vslinxHoverPatched) {
+      app.canvas._vslinxHoverPatched = true;
+
+      const orig = app.canvas.processMouseMove.bind(app.canvas);
+      app.canvas.processMouseMove = function (e) {
+        const r = orig(e);
+
+        // ✅ FIX: if the canvas says we're no longer hovering THIS node (including empty space),
+        // clear the row hover immediately. This avoids the "fast move" lingering hover.
+        if (vslinxHoverNode) {
+          const over = this.node_over;
+          if (over !== vslinxHoverNode) {
+            clearHoverOnNode(vslinxHoverNode);
+            vslinxHoverNode = null;
+            setCanvasCursor("");
+          }
+        }
+
+        return r;
+      };
+    }
+
+    if (!app.canvas._vslinxMouseLeaveBound) {
+      app.canvas._vslinxMouseLeaveBound = true;
+      const c = app?.canvas?.canvas;
+      if (c) {
+        const clearAll = () => {
+          if (vslinxHoverNode) {
+            clearHoverOnNode(vslinxHoverNode);
+            vslinxHoverNode = null;
+          }
+          setCanvasCursor("");
+        };
+        // Leaving the actual canvas element (useful but not the main fix)
+        c.addEventListener("mouseleave", clearAll);
+        c.addEventListener("pointerleave", clearAll);
+      }
+    }
+
+    const origOnMouseMove = node.onMouseMove;
+    node.onMouseMove = function (e, pos, canvas) {
+      origOnMouseMove?.call(this, e, pos, canvas);
+
+      vslinxHoverNode = this;
+
+      const rows = getRowWidgets(this);
+      let cursor = "";
+      let didAnyChange = false;
+
+      for (const row of rows) {
+        const rowY = row._rowY;
+        if (typeof rowY !== "number") continue;
+
+        const inThisRow = pos[1] >= rowY && pos[1] <= rowY + ROW_HEIGHT;
+
+        if (!inThisRow) {
+          if (row._hover) {
+            row._hover = null;
+            didAnyChange = true;
+          }
+          continue;
+        }
+
+        const part = row._hitPart(pos);
+        if (row._hover !== part) {
+          row._hover = part;
+          didAnyChange = true;
+        }
+
+        if (part) cursor = "pointer";
+      }
+
+      if (didAnyChange) this.setDirtyCanvas(true, true);
+      setCanvasCursor(cursor);
+    };
 
     const origConfigure = node.configure;
     node.configure = function (info) {
