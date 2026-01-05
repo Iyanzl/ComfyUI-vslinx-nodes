@@ -103,6 +103,21 @@ You can either **connect a model**, or **provide the id**  or **title** of a `Po
 
 <img width="1766" height="498" alt="Image" src="https://github.com/user-attachments/assets/cb1d76a7-d638-4573-950e-4ae371d428be" />
 
+#### Multi-Language CSV Prompt Picker
+This node helps you build prompts from one or more CSV “prompt lists”. For each row you pick an entry (or choose `Random`), and the node combines everything into one final prompt — plus two preview outputs so you can see what was chosen.
+
+It’s especially useful if you write prompts in another language (Chinese, Japanese, Spanish, etc.) but want the final output to be English prompt text. You can keep a CSV where the **left column is your native-language key** and the **right column is the English prompt text**.
+
+Example CSV (2 columns):
+- `猫` → `cat, cute, fluffy`
+- `夜景` → `night cityscape, neon lights`
+
+You can then select `猫` inside the node UI (in your language), and the node will output the matching English prompt text.
+
+You can find a full explanation on how to use it in the documentation for the node either inside comfyui itself by clicking on the (i)-Button above the node or [here]() on github.
+
+<img width="1202" height="695" alt="Image" src="https://github.com/user-attachments/assets/72818efa-c8d1-44db-b863-3e65084121c4" />
+
 ### Inpaint helper
 #### Fit Image into BBox Mask
 This node fits an image <b>inside the bounding box region of a mask</b> and places it into a destination image (or a blank canvas). It’s useful for workflows where you want to insert or align a smaller image (e.g. pose, object, logo, patch) into a specific masked region while keeping correct proportions.
