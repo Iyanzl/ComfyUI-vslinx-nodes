@@ -114,7 +114,7 @@ Example CSV (2 columns):
 
 You can then select `猫` inside the node UI (in your language), and the node will output the matching English prompt text.
 
-You can find a full explanation on how to use it in the documentation for the node either inside comfyui itself by clicking on the (i)-Button above the node or [here]() on github.
+You can find a full explanation on how to use it in the documentation for the node either inside comfyui itself by clicking on the (i)-Button above the node or [here](https://github.com/vslinx/ComfyUI-vslinx-nodes/blob/main/web/docs/vsLinx_MultiLangPromptPicker.md) on github.
 
 <img width="1202" height="695" alt="Image" src="https://github.com/user-attachments/assets/72818efa-c8d1-44db-b863-3e65084121c4" />
 
@@ -134,6 +134,9 @@ You can find an example workflow [here](https://github.com/user-attachments/asse
 <img width="512" height="512" src="https://github.com/user-attachments/assets/8c4d8a46-42e9-4da0-ab72-7d00b5bd7d8f"/>
 
 ## Changelog
+### v.1.7.0
+- added new ``Multi-Language CSV Prompt Picker`` to build prompts from one or more CSV “prompt lists”. For each row you pick an entry (or choose `Random`), and the node combines everything into one final prompt — plus two preview outputs so you can see what was chosen. This is useful if you write prompts in another language (Chinese, Japanese, Spanish, etc.) but want the final output to be English prompt text. You can keep a CSV where the **left column is your native-language key** and the **right column is the English prompt text**. 
+
 ### v.1.6.1
 - added filename export for ``Load (Multiple) Images (List)`` and ``Load (Multiple) Images (Batch)`` with a node-property to also dedupe the filename to remove `` (number)`` from the name in case of a duplicate filename 
 
