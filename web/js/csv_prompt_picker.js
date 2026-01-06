@@ -388,6 +388,154 @@ function showFilePickerModal(files, current = "") {
   });
 }
 
+function showKeyPickerMenu(items, event, titleText = "Selection") {
+  return new Promise((resolve) => {
+    const ev = event?.originalEvent || event?.detail?.event || event;
+    const cx = typeof ev?.clientX === "number" ? ev.clientX : 0;
+    const cy = typeof ev?.clientY === "number" ? ev.clientY : 0;
+
+    const overlay = document.createElement("div");
+    overlay.style.position = "fixed";
+    overlay.style.inset = "0";
+    overlay.style.background = "transparent";
+    overlay.style.zIndex = "1000000";
+
+    const card = document.createElement("div");
+    card.style.position = "absolute";
+    card.style.left = "0px";
+    card.style.top = "0px";
+    card.style.width = "340px";
+    card.style.maxWidth = "86vw";
+    card.style.background = "#1f1f1f";
+    card.style.border = "1px solid #444";
+    card.style.borderRadius = "12px";
+    card.style.padding = "10px";
+    card.style.color = "#eee";
+    card.style.fontFamily = "sans-serif";
+    card.style.boxShadow = "0 10px 30px rgba(0,0,0,0.35)";
+    card.style.display = "flex";
+    card.style.flexDirection = "column";
+    card.style.gap = "8px";
+
+    const title = document.createElement("div");
+    title.textContent = titleText;
+    title.style.fontSize = "13px";
+    title.style.fontWeight = "600";
+    title.style.opacity = "0.95";
+
+    const search = document.createElement("input");
+    search.type = "text";
+    search.placeholder = "Filter";
+    search.style.padding = "9px 10px";
+    search.style.borderRadius = "10px";
+    search.style.border = "1px solid #555";
+    search.style.background = "#2b2b2b";
+    search.style.color = "#eee";
+    search.style.outline = "none";
+
+    const list = document.createElement("div");
+    list.style.maxHeight = "320px";
+    list.style.overflow = "auto";
+    list.style.border = "1px solid #333";
+    list.style.borderRadius = "10px";
+    list.style.background = "#181818";
+
+    const close = () => {
+      if (overlay.parentNode) document.body.removeChild(overlay);
+      resolve(null);
+    };
+
+    overlay.onclick = (e) => {
+      if (e.target === overlay) close();
+    };
+
+    const onKeyDown = (e) => {
+      if (e.key === "Escape") close();
+    };
+
+    document.addEventListener("keydown", onKeyDown, true);
+
+    const cleanup = () => {
+      document.removeEventListener("keydown", onKeyDown, true);
+    };
+
+    const finalize = (val) => {
+      cleanup();
+      if (overlay.parentNode) document.body.removeChild(overlay);
+      resolve(val);
+    };
+
+    function render(filterText) {
+      list.innerHTML = "";
+      const f = (filterText || "").trim().toLowerCase();
+      const shown = (items || []).filter((it) => {
+        const t = String(it?.content ?? "");
+        return !f || t.toLowerCase().includes(f);
+      });
+
+      if (!shown.length) {
+        const empty = document.createElement("div");
+        empty.textContent = "No matches.";
+        empty.style.padding = "10px";
+        empty.style.opacity = "0.8";
+        list.appendChild(empty);
+        return;
+      }
+
+      for (const it of shown) {
+        const row = document.createElement("div");
+        row.textContent = String(it?.content ?? "");
+        row.style.padding = "9px 10px";
+        row.style.cursor = "pointer";
+        row.style.borderBottom = "1px solid #222";
+        row.style.whiteSpace = "nowrap";
+        row.style.overflow = "hidden";
+        row.style.textOverflow = "ellipsis";
+
+        row.onmouseenter = () => (row.style.background = "#232323");
+        row.onmouseleave = () => (row.style.background = "transparent");
+
+        row.onclick = (e) => {
+          e.preventDefault?.();
+          e.stopPropagation?.();
+          finalize(it);
+        };
+
+        list.appendChild(row);
+      }
+    }
+
+    search.oninput = () => render(search.value);
+
+    card.appendChild(title);
+    card.appendChild(search);
+    card.appendChild(list);
+    overlay.appendChild(card);
+    document.body.appendChild(overlay);
+
+    render("");
+
+    const pad = 8;
+    const vw = window.innerWidth || 0;
+    const vh = window.innerHeight || 0;
+
+    const rect = card.getBoundingClientRect();
+    let left = cx;
+    let top = cy;
+
+    if (left + rect.width + pad > vw) left = Math.max(pad, vw - rect.width - pad);
+    if (top + rect.height + pad > vh) top = Math.max(pad, vh - rect.height - pad);
+
+    card.style.left = `${left}px`;
+    card.style.top = `${top}px`;
+
+    setTimeout(() => {
+      search.focus();
+      search.select();
+    }, 0);
+  });
+}
+
 function pickFilesFromDialog() {
   return new Promise((resolve) => {
     const input = document.createElement("input");
@@ -829,7 +977,11 @@ class CsvRowWidget {
         },
       }));
 
-      new LiteGraph.ContextMenu(items, { event, title: "Selection" });
+      showKeyPickerMenu(items, event, "Selection").then((picked) => {
+        if (!picked) return;
+        picked.callback?.();
+      });
+
       return true;
     }
 
@@ -877,7 +1029,6 @@ app.registerExtension({
           }
           setCanvasCursor("");
         };
-        // Leaving the actual canvas element (useful but not the main fix)
         c.addEventListener("mouseleave", clearAll);
         c.addEventListener("pointerleave", clearAll);
       }
