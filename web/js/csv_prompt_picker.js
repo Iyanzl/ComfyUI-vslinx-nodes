@@ -90,7 +90,6 @@ function drawHoverOverlay(ctx, x, y, w, h, danger = false) {
   ctx.fillStyle = danger ? "#e05555" : "#ffffff";
   roundRectPath(ctx, x + 1, y + 1, w - 2, h - 2, 6);
   ctx.fill();
-
   ctx.globalAlpha = danger ? 0.22 : 0.16;
   ctx.strokeStyle = danger ? "#e05555" : "#ffffff";
   ctx.lineWidth = 1;
@@ -108,13 +107,10 @@ function drawGripDots(ctx, x, y, w, h, active = false) {
   const r = Math.max(1.2, Math.min(w, h) * 0.07);
   const gapX = Math.max(r * 2.2, w * 0.18);
   const gapY = Math.max(r * 2.2, h * 0.14);
-
   const gridW = gapX * (cols - 1);
   const gridH = gapY * (rows - 1);
-
   const cx0 = x + w / 2 - gridW / 2;
   const cy0 = y + h / 2 - gridH / 2;
-
   for (let ry = 0; ry < rows; ry++) {
     for (let cx = 0; cx < cols; cx++) {
       const px = cx0 + cx * gapX;
@@ -124,7 +120,6 @@ function drawGripDots(ctx, x, y, w, h, active = false) {
       ctx.fill();
     }
   }
-
   ctx.restore();
 }
 
@@ -136,6 +131,11 @@ function setCanvasCursor(cursor) {
 }
 
 let vslinxHoverNode = null;
+let vslinxDragNode = null;
+
+function isDragging() {
+  return !!(vslinxDragNode?._vslinxDrag?.row && vslinxDragNode._vslinxDrag.row._dragging);
+}
 
 function clearHoverOnNode(node) {
   if (!node) return;
@@ -149,6 +149,10 @@ function clearHoverOnNode(node) {
       w._dragging = false;
       changed = true;
     }
+  }
+  if (node._vslinxDrag) {
+    node._vslinxDrag = null;
+    changed = true;
   }
   if (changed) node.setDirtyCanvas(true, true);
 }
@@ -645,6 +649,9 @@ const BUTTON_ID = "vslinx_select_csv_button";
 const BUTTON_LABEL = "Select CSV File";
 const LIST_SIDE_MARGIN = (globalThis?.LiteGraph?.NODE_WIDGET_MARGIN ?? 10);
 const ROW_HEIGHT = 54;
+const DRAG_SNAP_FRACTION = 0.50;
+const DRAG_SNAP_ENTER = 0.15;
+const DRAG_SNAP_EXIT = 0.65;
 
 const DRAG_HANDLE_W = 22;
 const DRAG_HANDLE_GAP = 8;
@@ -794,44 +801,143 @@ function ensureSelectButton(node) {
   return btn;
 }
 
-function reorderRowWidget(node, rowWidget, targetIndex) {
-  const rows = getRowWidgets(node);
-  const from = rows.indexOf(rowWidget);
+function getRowsInOrder(node) {
+  return getRowWidgets(node);
+}
+
+function reorderDraggedRow(node, draggedRow, targetIndex) {
+  const rows = getRowsInOrder(node);
+  const from = rows.indexOf(draggedRow);
   if (from === -1) return false;
 
   const clamped = Math.max(0, Math.min(targetIndex, rows.length - 1));
   if (clamped === from) return false;
 
-  rows.splice(from, 1);
-  rows.splice(clamped, 0, rowWidget);
+  const nextRows = rows.slice();
+  nextRows.splice(from, 1);
+  nextRows.splice(clamped, 0, draggedRow);
 
-  const others = (node.widgets || []).filter((w) => !isRowWidget(w));
-  node.widgets = [...others, ...rows];
+  const nonRows = (node.widgets || []).filter((w) => !isRowWidget(w));
+  node.widgets = [...nonRows, ...nextRows];
 
   layoutWidgets(node);
-  recomputeNodeSize(node);
   node.setDirtyCanvas(true, true);
   return true;
 }
 
-function targetRowIndexFromLocalY(node, localY) {
-  const rows = getRowWidgets(node);
-  if (!rows.length) return 0;
+function computeTargetIndex(node, probeY, draggedRow, dirY = 0) {
+  const rows = getRowsInOrder(node);
+  const others = rows.filter((r) => r !== draggedRow);
 
-  let best = 0;
-  let bestDist = Infinity;
+  if (!others.length) return 0;
 
-  for (let i = 0; i < rows.length; i++) {
-    const ry = rows[i]?._rowY;
-    if (typeof ry !== "number") continue;
-    const mid = ry + ROW_HEIGHT / 2;
-    const d = Math.abs(localY - mid);
-    if (d < bestDist) {
-      bestDist = d;
-      best = i;
-    }
+  let minY = Infinity;
+  for (const r of others) {
+    const ry = r?._rowY;
+    if (typeof ry === "number" && ry < minY) minY = ry;
   }
-  return best;
+  if (!Number.isFinite(minY)) minY = 10;
+
+  // Hysteresis: earlier threshold when moving down, later when moving up.
+  const thresh = dirY >= 0 ? DRAG_SNAP_ENTER : DRAG_SNAP_EXIT;
+
+  for (let i = 0; i < others.length; i++) {
+    const r = others[i];
+    const ry = typeof r?._rowY === "number" ? r._rowY : (minY + i * ROW_HEIGHT);
+
+    // Instead of "mid", use a configurable trigger line inside the row.
+    const triggerLine = ry + ROW_HEIGHT * thresh;
+
+    if (probeY < triggerLine) return i;
+  }
+
+  return others.length;
+}
+
+
+function drawDropPlaceholderAt(ctx, node, y) {
+  if (typeof y !== "number") return;
+
+  const x = LIST_SIDE_MARGIN;
+  const w = Math.max(0, (node?.size?.[0] ?? 0) - LIST_SIDE_MARGIN * 2);
+  const h = ROW_HEIGHT;
+  const padY = 2;
+  const yy = y + padY;
+  const hh = h - padY * 2;
+
+  ctx.save();
+  ctx.globalAlpha = 0.16;
+  ctx.fillStyle = "#000000";
+  roundRectPath(ctx, x + 2, yy + 2, w - 4, hh - 4, 10);
+  ctx.fill();
+
+  ctx.globalAlpha = 0.18;
+  ctx.fillStyle = "#ffffff";
+  roundRectPath(ctx, x + 1, yy + 1, w - 2, hh - 2, 10);
+  ctx.fill();
+
+  ctx.globalAlpha = 0.28;
+  ctx.strokeStyle = "#ffffff";
+  ctx.lineWidth = 1;
+  roundRectPath(ctx, x + 1, yy + 1, w - 2, hh - 2, 10);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawGhostRow(ctx, node, row, ghostY) {
+  const x = LIST_SIDE_MARGIN;
+  const w = Math.max(0, (node?.size?.[0] ?? 0) - LIST_SIDE_MARGIN * 2);
+
+  ctx.save();
+  ctx.globalAlpha = 0.25;
+  ctx.fillStyle = "#000000";
+  roundRectPath(ctx, x + 6, ghostY + 6, w - 12, ROW_HEIGHT - 6, 12);
+  ctx.fill();
+
+  ctx.globalAlpha = 0.98;
+  row._render(ctx, node, w, ghostY, { ghost: true });
+
+  ctx.globalAlpha = 0.35;
+  ctx.strokeStyle = "#ffffff";
+  ctx.lineWidth = 1;
+  roundRectPath(ctx, x + 1, ghostY + 1, w - 2, ROW_HEIGHT - 2, 10);
+  ctx.stroke();
+
+  ctx.restore();
+}
+
+function restoreOriginalOrder(node, originalRows) {
+  if (!node || !Array.isArray(originalRows) || !originalRows.length) return;
+  const currentRows = getRowsInOrder(node);
+  const present = new Set(currentRows);
+  const restored = originalRows.filter((r) => present.has(r));
+  for (const r of currentRows) {
+    if (!restored.includes(r)) restored.push(r);
+  }
+  const nonRows = (node.widgets || []).filter((w) => !isRowWidget(w));
+  node.widgets = [...nonRows, ...restored];
+  layoutWidgets(node);
+  node.setDirtyCanvas(true, true);
+}
+
+function endDrag(node, commit = true) {
+  const d = node?._vslinxDrag;
+  if (!d?.row) return;
+
+  const row = d.row;
+
+  row._dragging = false;
+  row._hover = null;
+
+  node._vslinxDrag = null;
+  vslinxDragNode = null;
+
+  if (!commit) {
+    restoreOriginalOrder(node, d.originalRows);
+  }
+
+  setCanvasCursor("");
+  node.setDirtyCanvas(true, true);
 }
 
 class CsvRowWidget {
@@ -843,10 +949,7 @@ class CsvRowWidget {
     this._map = {};
     this._hover = null;
     this._rowY = null;
-
-    // Drag state (handled entirely via widget.mouse move/up so LiteGraph keeps routing events)
     this._dragging = false;
-
     this._bounds = {
       drag: [0, 0, 0, 0],
       file: [0, 0, 0, 0],
@@ -931,11 +1034,10 @@ class CsvRowWidget {
     return null;
   }
 
-  draw(ctx, node, _width, y) {
-    this._rowY = y;
+  _render(ctx, node, _width, y, { ghost = false } = {}) {
+    if (!ghost) this._rowY = y;
 
     const height = ROW_HEIGHT;
-
     const x = LIST_SIDE_MARGIN;
     const w = Math.max(0, (node?.size?.[0] ?? _width) - LIST_SIDE_MARGIN * 2);
 
@@ -972,7 +1074,6 @@ class CsvRowWidget {
 
     ctx.save();
 
-    // Drag handle
     ctx.globalAlpha = 0.92;
     ctx.fillStyle = "#232323";
     roundRectPath(ctx, handleX, handleY, handleW, handleH, 7);
@@ -987,7 +1088,6 @@ class CsvRowWidget {
     if (this._hover === "drag" || this._dragging) drawHoverOverlay(ctx, handleX, handleY, handleW, handleH, false);
     drawGripDots(ctx, handleX, handleY, handleW, handleH, this._dragging);
 
-    // Table
     ctx.globalAlpha = 0.92;
     ctx.fillStyle = "#262626";
     roundRectPath(ctx, tableX, yy, tableW, hh, 7);
@@ -999,7 +1099,6 @@ class CsvRowWidget {
     roundRectPath(ctx, tableX, yy, tableW, hh, 7);
     ctx.stroke();
 
-    // separators
     ctx.globalAlpha = 0.55;
     ctx.strokeStyle = "#3a3a3a";
     ctx.beginPath();
@@ -1011,12 +1110,10 @@ class CsvRowWidget {
     ctx.lineTo(outX, botY + botH - 3);
     ctx.stroke();
 
-    // Hover overlays
     if (this._hover === "file") drawHoverOverlay(ctx, fileX, topY, fileW, topH, false);
     else if (this._hover === "remove") drawHoverOverlay(ctx, remX, topY, removeW, topH, true);
     else if (this._hover === "sel") drawHoverOverlay(ctx, selX, botY, selW, botH, false);
 
-    // Text
     ctx.globalAlpha = 1.0;
     ctx.fillStyle = LiteGraph.WIDGET_TEXT_COLOR;
 
@@ -1052,12 +1149,22 @@ class CsvRowWidget {
 
     ctx.restore();
 
-    // bounds (local coords)
-    this._bounds.drag = [handleX, handleY, handleW, handleH];
-    this._bounds.file = [fileX, topY, fileW, topH];
-    this._bounds.remove = [remX, topY, removeW, topH];
-    this._bounds.sel = [selX, botY, selW, botH];
-    this._bounds.out = [outX, botY, outW, botH];
+    if (!ghost) {
+      this._bounds.drag = [handleX, handleY, handleW, handleH];
+      this._bounds.file = [fileX, topY, fileW, topH];
+      this._bounds.remove = [remX, topY, removeW, topH];
+      this._bounds.sel = [selX, botY, selW, botH];
+      this._bounds.out = [outX, botY, outW, botH];
+    }
+  }
+
+  draw(ctx, node, _width, y) {
+    const d = node?._vslinxDrag;
+    if (d?.row === this && this._dragging) {
+      this._rowY = y;
+      return;
+    }
+    this._render(ctx, node, _width, y, { ghost: false });
   }
 
   mouse(event, pos, node) {
@@ -1069,54 +1176,84 @@ class CsvRowWidget {
       t === "pointercancel" || t === "mouseleave" || t === "pointerleave"
     );
 
-    // IMPORTANT: while dragging, handle move/up here (LiteGraph will keep routing to this widget)
     if (this._dragging) {
       if (isMove) {
-        // If button was released without a proper mouseup (rare), end drag.
         const buttons = typeof event?.buttons === "number" ? event.buttons : 1;
         if ((buttons & 1) === 0) {
-          this._dragging = false;
-          this._hover = null;
-          setCanvasCursor("");
-          node.setDirtyCanvas(true, true);
+          endDrag(node, false);
           return true;
         }
 
-        const localY = pos?.[1];
-        if (typeof localY === "number") {
-          const idx = targetRowIndexFromLocalY(node, localY);
-          reorderRowWidget(node, this, idx);
+        const d = node._vslinxDrag;
+        if (!d) return true;
+
+        const pointerY = pos?.[1];
+        if (typeof pointerY === "number") {
+          d.ghostY = pointerY - d.offsetY;
+
+          const probeY = d.ghostY + ROW_HEIGHT * DRAG_SNAP_FRACTION;
+
+          // Direction tracking (for hysteresis)
+          const lastProbeY = (typeof d.lastProbeY === "number") ? d.lastProbeY : probeY;
+          const dirY = probeY - lastProbeY;
+          d.lastProbeY = probeY;
+
+          const targetIndex = computeTargetIndex(node, probeY, this, dirY);
+
+          const rows = getRowsInOrder(node);
+          const currentIndex = rows.indexOf(this);
+          const clampedTarget = Math.max(0, Math.min(targetIndex, rows.length - 1));
+          if (clampedTarget !== currentIndex) {
+            reorderDraggedRow(node, this, clampedTarget);
+          }
+
+          node.setDirtyCanvas(true, true);
         }
 
         this._hover = "drag";
         setCanvasCursor("grabbing");
-        node.setDirtyCanvas(true, true);
         return true;
       }
 
       if (isUp) {
-        this._dragging = false;
-        this._hover = null;
-        setCanvasCursor("");
-        node.setDirtyCanvas(true, true);
+        endDrag(node, true);
         return true;
       }
 
       return true;
     }
 
-    // Normal click handling
     if (!isDown) return false;
     if (event.button !== 0) return false;
 
     const part = this._hitPart(pos);
 
     if (part === "drag") {
+      const rows = getRowsInOrder(node);
+      const startIndex = rows.indexOf(this);
+
       this._dragging = true;
       this._hover = "drag";
+
+      const pointerY = pos?.[1] ?? 0;
+      const rowTop = typeof this._rowY === "number" ? this._rowY : pointerY;
+      const offsetY = pointerY - rowTop;
+
+      node._vslinxDrag = {
+        row: this,
+        offsetY,
+        ghostY: rowTop,
+        originalRows: rows.slice(),
+        startIndex,
+        lastProbeY: rowTop + ROW_HEIGHT * DRAG_SNAP_FRACTION,
+      };
+
+      vslinxDragNode = node;
+
       setCanvasCursor("grabbing");
       node.setDirtyCanvas(true, true);
-      return true; // must return true so LiteGraph keeps sending move/up to this widget
+
+      return true;
     }
 
     if (part === "remove") {
@@ -1159,13 +1296,29 @@ app.registerExtension({
 
     node.serialize_widgets = true;
 
-    // Hover cleanup: when leaving node, clear all row hover/drag.
-    if (!app.canvas._vslinxHoverPatched) {
-      app.canvas._vslinxHoverPatched = true;
+    const origOnDrawForeground = node.onDrawForeground;
+    node.onDrawForeground = function (ctx) {
+      origOnDrawForeground?.call(this, ctx);
+
+      const d = this._vslinxDrag;
+      if (!d?.row || !d.row._dragging) return;
+
+      const slotY = d.row?._rowY;
+      drawDropPlaceholderAt(ctx, this, slotY);
+      drawGhostRow(ctx, this, d.row, d.ghostY);
+    };
+
+    if (!app.canvas._vslinxProcessMouseMovePatched) {
+      app.canvas._vslinxProcessMouseMovePatched = true;
 
       const orig = app.canvas.processMouseMove.bind(app.canvas);
       app.canvas.processMouseMove = function (e) {
         const r = orig(e);
+
+        if (isDragging()) {
+          setCanvasCursor("grabbing");
+          return r;
+        }
 
         if (vslinxHoverNode) {
           const over = this.node_over;
@@ -1183,20 +1336,37 @@ app.registerExtension({
     if (!app.canvas._vslinxMouseLeaveBound) {
       app.canvas._vslinxMouseLeaveBound = true;
       const c = app?.canvas?.canvas;
+
+      const cancelAll = () => {
+        if (vslinxDragNode?._vslinxDrag?.row?._dragging) {
+          endDrag(vslinxDragNode, false);
+        }
+
+        if (vslinxHoverNode) {
+          clearHoverOnNode(vslinxHoverNode);
+          vslinxHoverNode = null;
+        }
+
+        setCanvasCursor("");
+      };
+
+      const commitAll = () => {
+        if (vslinxDragNode?._vslinxDrag?.row?._dragging) {
+          endDrag(vslinxDragNode, true);
+        }
+        setCanvasCursor("");
+      };
+
       if (c) {
-        const clearAll = () => {
-          if (vslinxHoverNode) {
-            clearHoverOnNode(vslinxHoverNode);
-            vslinxHoverNode = null;
-          }
-          setCanvasCursor("");
-        };
-        c.addEventListener("mouseleave", clearAll);
-        c.addEventListener("pointerleave", clearAll);
-        window.addEventListener("blur", clearAll, true);
-        window.addEventListener("mouseup", clearAll, true);
-        window.addEventListener("pointerup", clearAll, true);
+        c.addEventListener("mouseleave", cancelAll);
+        c.addEventListener("pointerleave", cancelAll);
       }
+
+      window.addEventListener("blur", cancelAll, true);
+      window.addEventListener("pointercancel", cancelAll, true);
+
+      window.addEventListener("mouseup", commitAll, true);
+      window.addEventListener("pointerup", commitAll, true);
     }
 
     const origOnMouseMove = node.onMouseMove;
@@ -1207,7 +1377,6 @@ app.registerExtension({
 
       const rows = getRowWidgets(this);
 
-      // If any row is currently dragging, keep cursor stable and don't fight hover states.
       if (rows.some((r) => r?._dragging)) {
         setCanvasCursor("grabbing");
         return;
@@ -1248,6 +1417,10 @@ app.registerExtension({
     node.configure = function (info) {
       origConfigure?.call(node, info);
 
+      if (vslinxDragNode === node && node._vslinxDrag?.row?._dragging) {
+        endDrag(node, false);
+      }
+
       removeAllVslinxUiWidgets(node);
 
       ensureListTopSpacer(node, 10);
@@ -1270,6 +1443,8 @@ app.registerExtension({
         });
       }
 
+      node._vslinxDrag = null;
+
       layoutWidgets(node);
       recomputeNodeSize(node);
       node.setDirtyCanvas(true, true);
@@ -1279,6 +1454,8 @@ app.registerExtension({
     ensureListTopSpacer(node, 10);
     ensureButtonSpacer(node, 10);
     ensureSelectButton(node);
+
+    node._vslinxDrag = null;
 
     layoutWidgets(node);
     recomputeNodeSize(node);
