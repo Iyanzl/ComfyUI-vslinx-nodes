@@ -555,6 +555,8 @@ function showKeyPickerMenu(items, event, titleText = "Selection", opts = {}) {
     let multiMode = false;
     const selected = new Set(initialSelected);
 
+    selected.delete("(None)");
+
     const overlay = document.createElement("div");
     overlay.style.position = "fixed";
     overlay.style.inset = "0";
@@ -663,6 +665,57 @@ function showKeyPickerMenu(items, event, titleText = "Selection", opts = {}) {
     filterRow.appendChild(search);
     filterRow.appendChild(modeBtn);
 
+    const clearWrap = document.createElement("div");
+    clearWrap.style.marginTop = "2px";
+    clearWrap.style.marginBottom = "6px";
+
+    const clearBtnRow = document.createElement("div");
+    clearBtnRow.style.display = "flex";
+    clearBtnRow.style.alignItems = "center";
+    clearBtnRow.style.gap = "8px";
+    clearBtnRow.style.padding = "9px 10px";
+    clearBtnRow.style.border = "1px solid #333";
+    clearBtnRow.style.borderRadius = "10px";
+    clearBtnRow.style.background = "#151515";
+    clearBtnRow.style.cursor = "pointer";
+    clearBtnRow.style.userSelect = "none";
+
+    const clearLabel = document.createElement("div");
+    clearLabel.textContent = "Clear";
+    clearLabel.style.flex = "1";
+    clearLabel.style.opacity = "0.95";
+
+    const clearMark = document.createElement("div");
+    clearMark.style.width = "18px";
+    clearMark.style.minWidth = "18px";
+    clearMark.style.textAlign = "center";
+    clearMark.style.opacity = "0.9";
+
+    clearBtnRow.onmouseenter = () => (clearBtnRow.style.background = "#1f1f1f");
+    clearBtnRow.onmouseleave = () => (clearBtnRow.style.background = "#151515");
+
+    clearBtnRow.onclick = (e) => {
+      e.preventDefault?.();
+      e.stopPropagation?.();
+
+      if (selected.size === 0) return;
+
+      selected.clear();
+
+      if (!multiMode) {
+        cleanup();
+        if (overlay.parentNode) document.body.removeChild(overlay);
+        resolve({ mode: "clear" });
+        return;
+      }
+
+      render(search.value);
+    };
+
+    clearBtnRow.appendChild(clearLabel);
+    clearBtnRow.appendChild(clearMark);
+    clearWrap.appendChild(clearBtnRow);
+
     const list = document.createElement("div");
     list.style.maxHeight = "320px";
     list.style.overflow = "auto";
@@ -693,56 +746,11 @@ function showKeyPickerMenu(items, event, titleText = "Selection", opts = {}) {
       document.removeEventListener("keydown", onKeyDown, true);
     };
 
-    function addClearRow() {
-      const row = document.createElement("div");
-      row.style.display = "flex";
-      row.style.alignItems = "center";
-      row.style.gap = "8px";
-      row.style.padding = "9px 10px";
-      row.style.cursor = "pointer";
-      row.style.borderBottom = "1px solid #222";
-      row.style.whiteSpace = "nowrap";
-      row.style.overflow = "hidden";
-      row.style.background = "transparent";
-
-      const label = document.createElement("div");
-      label.textContent = "Clear";
-      label.style.flex = "1";
-      label.style.opacity = "0.95";
-
-      const mark = document.createElement("div");
-      mark.style.width = "18px";
-      mark.style.minWidth = "18px";
-      mark.style.textAlign = "center";
-      mark.style.opacity = "0.9";
-      mark.textContent = selected.size ? "↺" : "";
-
-      row.onmouseenter = () => (row.style.background = "#232323");
-      row.onmouseleave = () => (row.style.background = "transparent");
-
-      row.onclick = (e) => {
-        e.preventDefault?.();
-        e.stopPropagation?.();
-        selected.clear();
-        render(search.value);
-      };
-
-      row.appendChild(label);
-      row.appendChild(mark);
-
-      const wrap = document.createElement("div");
-      wrap.style.paddingBottom = "6px";
-      wrap.appendChild(row);
-      list.appendChild(wrap);
-
-      const sep = document.createElement("div");
-      sep.style.height = "1px";
-      sep.style.background = "#222";
-      sep.style.margin = "6px 0 8px 0";
-      list.appendChild(sep);
-    }
-
     function render(filterText) {
+      clearMark.textContent = selected.size ? "↺" : "";
+      clearBtnRow.style.opacity = selected.size ? "1" : "0.55";
+      clearBtnRow.style.cursor = selected.size ? "pointer" : "default";
+
       list.innerHTML = "";
       const f = (filterText || "").trim().toLowerCase();
 
@@ -751,8 +759,6 @@ function showKeyPickerMenu(items, event, titleText = "Selection", opts = {}) {
         if (multiMode && t === "(None)") return false;
         return !f || t.toLowerCase().includes(f);
       });
-
-      if (multiMode) addClearRow();
 
       if (!shown.length) {
         const empty = document.createElement("div");
@@ -788,23 +794,15 @@ function showKeyPickerMenu(items, event, titleText = "Selection", opts = {}) {
         mark.style.opacity = "0.95";
 
         const isSel = selected.has(content);
-        if (multiMode) {
-          mark.textContent = isSel ? "✓" : "";
-          row.style.background = isSel ? "#242e25" : "transparent";
-        } else {
-          mark.textContent = "";
-          row.style.background = "transparent";
-        }
+        mark.textContent = isSel ? "✓" : "";
+        row.style.background = isSel ? "#242e25" : "transparent";
 
         row.onmouseenter = () => {
-          row.style.background = multiMode
-            ? (selected.has(content) ? "#283328" : "#232323")
-            : "#232323";
+          row.style.background = isSel ? "#283328" : "#232323";
         };
         row.onmouseleave = () => {
-          row.style.background = multiMode
-            ? (selected.has(content) ? "#242e25" : "transparent")
-            : "transparent";
+          const nowSel = selected.has(content);
+          row.style.background = nowSel ? "#242e25" : "transparent";
         };
 
         row.onclick = (e) => {
@@ -834,6 +832,7 @@ function showKeyPickerMenu(items, event, titleText = "Selection", opts = {}) {
 
     card.appendChild(title);
     card.appendChild(filterRow);
+    card.appendChild(clearWrap);
     card.appendChild(list);
     overlay.appendChild(card);
     document.body.appendChild(overlay);
@@ -2095,6 +2094,7 @@ app.registerExtension({
     ensureListTopSpacer(node, 10);
     ensureButtonSpacer(node, 10);
     ensureSelectButton(node);
+
     ensureExtraPromptRow(node);
 
     node._vslinxDrag = null;
