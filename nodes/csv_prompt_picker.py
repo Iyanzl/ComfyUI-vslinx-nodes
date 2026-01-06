@@ -345,48 +345,88 @@ class VSLinx_MultiLangPromptPicker:
 
         rng = random.Random(eff_seed)
 
-        final_parts: List[str] = []
-        sel_preview: List[str] = []
-        out_preview: List[str] = []
-
+        # Collect both CsvRowWidget and ExtraPromptWidget, sorted by 'order'
+        items = []
         for k, v in kwargs.items():
             if not (isinstance(k, str) and k.lower().startswith("csv_")):
                 continue
             if not isinstance(v, dict):
                 continue
 
-            filename = v.get("file")
-            key = v.get("key")
-
-            if not filename or not isinstance(filename, str):
+            vtype = v.get("type")
+            if vtype not in ("CsvRowWidget", "ExtraPromptWidget"):
                 continue
 
+            order = v.get("order", 0)
             try:
-                filename = sanitize_prompt_filename(filename)
-                labels, mapping = get_cached_promptfile(filename)
+                order = int(order)
             except Exception:
+                order = 0
+
+            items.append((order, k, v))
+
+        items.sort(key=lambda t: (t[0], t[1]))
+
+        final_parts: List[str] = []
+        sel_preview: List[str] = []
+        out_preview: List[str] = []
+
+        for _, _, v in items:
+            vtype = v.get("type")
+
+            if vtype == "CsvRowWidget":
+                filename = v.get("file")
+                key = v.get("key")
+
+                if not filename or not isinstance(filename, str):
+                    continue
+
+                try:
+                    filename = sanitize_prompt_filename(filename)
+                    labels, mapping = get_cached_promptfile(filename)
+                except Exception:
+                    continue
+
+                if not labels:
+                    continue
+
+                if not key or key == "(None)":
+                    continue
+
+                original_key = key
+                if key == "Random":
+                    key = rng.choice(labels)
+
+                out = mapping.get(key, "")
+                if out and out.strip():
+                    out = out.strip()
+                    final_parts.append(out)
+                    sel_preview.append(f"🔀 {key}" if original_key == "Random" else f"🧾 {key}")
+                    out_preview.append(f"💬 {out}")
                 continue
 
-            if not labels:
-                continue
+            if vtype == "ExtraPromptWidget":
+                text = v.get("text", "")
+                if not isinstance(text, str):
+                    text = str(text)
 
-            if not key or key == "(None)":
-                continue
+                text = text.strip()
+                if not text:
+                    continue
 
-            original_key = key
-            if key == "Random":
-                key = rng.choice(labels)
+                # Insert additional prompt in-line at its position
+                final_parts.append(text)
 
-            out = mapping.get(key, "")
-            if out and out.strip():
-                out = out.strip()
-                final_parts.append(out)
-                sel_preview.append(f"🔀 {key}" if original_key == "Random" else f"🧾 {key}")
-                out_preview.append(f"💬 {out}")
+                sel_preview.append("📝 Additional prompt")
+                first_line = text.splitlines()[0].strip() if text.splitlines() else text
+                if len(first_line) > 120:
+                    first_line = first_line[:117] + "..."
+                out_preview.append(f"💬 {first_line}")
 
-        prompt = ", ".join(final_parts)
+        prompt = ", ".join([p for p in final_parts if isinstance(p, str) and p != ""])
         if add_comma_at_end and prompt:
-            prompt += ","
+            if not prompt.rstrip().endswith(","):
+                prompt += ","
 
         return (
             prompt,

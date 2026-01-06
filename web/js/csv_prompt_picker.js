@@ -141,11 +141,12 @@ function clearHoverOnNode(node) {
   if (!node) return;
   let changed = false;
   for (const w of (node.widgets || [])) {
-    if (w?.value?.type === "CsvRowWidget" && w._hover) {
+    const t = w?.value?.type;
+    if ((t === "CsvRowWidget" || t === "ExtraPromptWidget") && w._hover) {
       w._hover = null;
       changed = true;
     }
-    if (w?.value?.type === "CsvRowWidget" && w._dragging) {
+    if ((t === "CsvRowWidget" || t === "ExtraPromptWidget") && w._dragging) {
       w._dragging = false;
       changed = true;
     }
@@ -185,6 +186,128 @@ async function listPromptFiles() {
   const json = await res.json();
   return Array.isArray(json?.files) ? json.files : [];
 }
+
+/* ---------------------------- Modal helpers ---------------------------- */
+
+function showAdditionalPromptModal(currentText = "") {
+  return new Promise((resolve) => {
+    const overlay = document.createElement("div");
+    overlay.style.position = "fixed";
+    overlay.style.inset = "0";
+    overlay.style.background = "rgba(0,0,0,0.55)";
+    overlay.style.zIndex = "999999";
+    overlay.style.display = "flex";
+    overlay.style.alignItems = "center";
+    overlay.style.justifyContent = "center";
+
+    const card = document.createElement("div");
+    card.style.width = "720px";
+    card.style.maxWidth = "94vw";
+    card.style.maxHeight = "86vh";
+    card.style.background = "#1f1f1f";
+    card.style.border = "1px solid #444";
+    card.style.borderRadius = "12px";
+    card.style.padding = "14px";
+    card.style.color = "#eee";
+    card.style.fontFamily = "sans-serif";
+    card.style.boxShadow = "0 10px 30px rgba(0,0,0,0.35)";
+    card.style.display = "flex";
+    card.style.flexDirection = "column";
+    card.style.gap = "10px";
+
+    const title = document.createElement("div");
+    title.textContent = "Additional Prompt (multiline)";
+    title.style.fontSize = "15px";
+    title.style.fontWeight = "600";
+
+    const hint = document.createElement("div");
+    hint.textContent = "This text will be inserted into the prompt at this row’s position.";
+    hint.style.fontSize = "12px";
+    hint.style.opacity = "0.8";
+    hint.style.lineHeight = "1.35";
+
+    const ta = document.createElement("textarea");
+    ta.value = String(currentText ?? "");
+    ta.style.width = "100%";
+    ta.style.minHeight = "220px";
+    ta.style.maxHeight = "52vh";
+    ta.style.resize = "vertical";
+    ta.style.padding = "10px";
+    ta.style.borderRadius = "10px";
+    ta.style.border = "1px solid #555";
+    ta.style.background = "#2b2b2b";
+    ta.style.color = "#eee";
+    ta.style.outline = "none";
+    ta.style.fontFamily = "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
+    ta.style.fontSize = "12px";
+    ta.style.lineHeight = "1.35";
+
+    const buttons = document.createElement("div");
+    buttons.style.display = "flex";
+    buttons.style.justifyContent = "flex-end";
+    buttons.style.gap = "8px";
+
+    const btn = (label) => {
+      const b = document.createElement("button");
+      b.textContent = label;
+      b.style.padding = "8px 10px";
+      b.style.borderRadius = "10px";
+      b.style.border = "1px solid #555";
+      b.style.background = "#2b2b2b";
+      b.style.color = "#eee";
+      b.style.cursor = "pointer";
+      return b;
+    };
+
+    const cancel = btn("Cancel");
+    const clear = btn("Clear");
+    const save = btn("Save");
+
+    const cleanup = () => document.removeEventListener("keydown", onKeyDown, true);
+
+    const close = (val) => {
+      cleanup();
+      if (overlay.parentNode) document.body.removeChild(overlay);
+      resolve(val);
+    };
+
+    cancel.onclick = () => close(null);
+    clear.onclick = () => (ta.value = "");
+    save.onclick = () => close(ta.value);
+
+    overlay.onclick = (e) => {
+      if (e.target === overlay) cancel.onclick();
+    };
+
+    const onKeyDown = (e) => {
+      if (e.key === "Escape") cancel.onclick();
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        save.onclick();
+      }
+    };
+
+    document.addEventListener("keydown", onKeyDown, true);
+
+    card.appendChild(title);
+    card.appendChild(hint);
+    card.appendChild(ta);
+    buttons.appendChild(cancel);
+    buttons.appendChild(clear);
+    buttons.appendChild(save);
+    card.appendChild(buttons);
+    overlay.appendChild(card);
+    document.body.appendChild(overlay);
+
+    setTimeout(() => {
+      ta.focus();
+      ta.selectionStart = ta.value.length;
+      ta.selectionEnd = ta.value.length;
+    }, 0);
+  });
+}
+
+/* ---------------------------- other modals ---------------------------- */
 
 function showConflictModal({ filename, suggested }) {
   return new Promise((resolve) => {
@@ -615,16 +738,30 @@ async function uploadWithConflictResolution(file) {
   return { cancelled: false, overwriteWasChosen, up };
 }
 
+/* ---------------------------- Layout helpers ---------------------------- */
+
 function getRowWidgets(node) {
-  return (node.widgets || []).filter((w) => w?.value?.type === "CsvRowWidget");
+  return (node.widgets || []).filter((w) => {
+    const t = w?.value?.type;
+    return t === "CsvRowWidget" || t === "ExtraPromptWidget";
+  });
+}
+
+function isRowWidget(w) {
+  const t = w?.value?.type;
+  return t === "CsvRowWidget" || t === "ExtraPromptWidget";
 }
 
 function hasRowForFilename(node, filename, excludeWidget = null) {
-  return getRowWidgets(node).some((w) => w !== excludeWidget && w?.value?.file === filename);
+  return (node.widgets || []).some((w) => {
+    if (w === excludeWidget) return false;
+    if (w?.value?.type !== "CsvRowWidget") return false;
+    return w?.value?.file === filename;
+  });
 }
 
 function removeRowsForFilename(node, filename) {
-  const rows = getRowWidgets(node);
+  const rows = (node.widgets || []).filter((w) => w?.value?.type === "CsvRowWidget");
   for (const row of rows) {
     if (row?.value?.file === filename) {
       const idx = node.widgets.indexOf(row);
@@ -647,8 +784,13 @@ const LIST_TOP_SPACER_ID = "vslinx_list_top_spacer";
 const BUTTON_SPACER_ID = "vslinx_select_csv_spacer";
 const BUTTON_ID = "vslinx_select_csv_button";
 const BUTTON_LABEL = "Select CSV File";
+
+const EXTRA_PROMPT_ID = "vslinx_extra_prompt_row";
+const EXTRA_PROMPT_NAME = "csv_additional_prompt"; // must start with csv_ so Python sees it
+
 const LIST_SIDE_MARGIN = (globalThis?.LiteGraph?.NODE_WIDGET_MARGIN ?? 10);
 const ROW_HEIGHT = 54;
+
 const DRAG_SNAP_FRACTION = 0.50;
 const DRAG_SNAP_ENTER = 0.15;
 const DRAG_SNAP_EXIT = 0.65;
@@ -656,9 +798,6 @@ const DRAG_SNAP_EXIT = 0.65;
 const DRAG_HANDLE_W = 22;
 const DRAG_HANDLE_GAP = 8;
 
-function isRowWidget(w) {
-  return w?.value?.type === "CsvRowWidget";
-}
 function isListTopSpacer(w) {
   return w?._vslinx_id === LIST_TOP_SPACER_ID;
 }
@@ -667,6 +806,18 @@ function isButtonSpacer(w) {
 }
 function isBottomButton(w) {
   return w?._vslinx_id === BUTTON_ID;
+}
+function isExtraPromptRow(w) {
+  return w?._vslinx_id === EXTRA_PROMPT_ID;
+}
+
+function updateRowOrders(node) {
+  const rows = getRowWidgets(node);
+  for (let i = 0; i < rows.length; i++) {
+    if (rows[i]?.value && typeof rows[i].value === "object") {
+      rows[i].value.order = i;
+    }
+  }
 }
 
 function ensureListTopSpacer(node, height = 10) {
@@ -732,6 +883,7 @@ function layoutWidgets(node) {
   if (btn) next.push(btn);
 
   node.widgets = next;
+  updateRowOrders(node);
 }
 
 function removeAllVslinxUiWidgets(node) {
@@ -740,9 +892,11 @@ function removeAllVslinxUiWidgets(node) {
     if (isListTopSpacer(w)) return false;
     if (isButtonSpacer(w)) return false;
     if (isBottomButton(w)) return false;
+    if (isExtraPromptRow(w)) return false;
     if (w?._vslinx_id === LIST_TOP_SPACER_ID) return false;
     if (w?._vslinx_id === BUTTON_SPACER_ID) return false;
     if (w?._vslinx_id === BUTTON_ID) return false;
+    if (w?._vslinx_id === EXTRA_PROMPT_ID) return false;
     return true;
   });
 }
@@ -777,6 +931,10 @@ function ensureSelectButton(node) {
         node._csvRowCounter = (node._csvRowCounter || 0) + 1;
         const row = new CsvRowWidget("csv_" + node._csvRowCounter);
         node.addCustomWidget(row);
+
+        // place at end (before button)
+        row.value.order = getRowWidgets(node).length;
+
         await row.setFile(filename);
 
         layoutWidgets(node);
@@ -838,22 +996,16 @@ function computeTargetIndex(node, probeY, draggedRow, dirY = 0) {
   }
   if (!Number.isFinite(minY)) minY = 10;
 
-  // Hysteresis: earlier threshold when moving down, later when moving up.
   const thresh = dirY >= 0 ? DRAG_SNAP_ENTER : DRAG_SNAP_EXIT;
 
   for (let i = 0; i < others.length; i++) {
     const r = others[i];
     const ry = typeof r?._rowY === "number" ? r._rowY : (minY + i * ROW_HEIGHT);
-
-    // Instead of "mid", use a configurable trigger line inside the row.
     const triggerLine = ry + ROW_HEIGHT * thresh;
-
     if (probeY < triggerLine) return i;
   }
-
   return others.length;
 }
-
 
 function drawDropPlaceholderAt(ctx, node, y) {
   if (typeof y !== "number") return;
@@ -937,14 +1089,262 @@ function endDrag(node, commit = true) {
   }
 
   setCanvasCursor("");
+  updateRowOrders(node);
   node.setDirtyCanvas(true, true);
 }
+
+/* ---------------------------- ExtraPromptWidget ---------------------------- */
+
+class ExtraPromptWidget {
+  constructor(name) {
+    this.name = name;
+    this.type = "custom";
+    this.value = { type: "ExtraPromptWidget", text: "", order: 0 };
+    this._hover = null;
+    this._rowY = null;
+    this._dragging = false;
+    this._bounds = {
+      drag: [0, 0, 0, 0],
+      edit: [0, 0, 0, 0],
+    };
+  }
+
+  computeSize() {
+    return [0, ROW_HEIGHT];
+  }
+
+  serializeValue() {
+    return this.value;
+  }
+
+  _hitPart(pos) {
+    const x = pos[0];
+    const y = pos[1];
+    const inRect = (r) => x >= r[0] && x <= r[0] + r[2] && y >= r[1] && y <= r[1] + r[3];
+    if (inRect(this._bounds.drag)) return "drag";
+    if (inRect(this._bounds.edit)) return "edit";
+    return null;
+  }
+
+  _render(ctx, node, _width, y, { ghost = false } = {}) {
+    if (!ghost) this._rowY = y;
+
+    const height = ROW_HEIGHT;
+    const x = LIST_SIDE_MARGIN;
+    const w = Math.max(0, (node?.size?.[0] ?? _width) - LIST_SIDE_MARGIN * 2);
+
+    const innerPadY = 2;
+    const yy = y + innerPadY;
+    const hh = Math.max(0, height - innerPadY * 2);
+
+    const handleW = DRAG_HANDLE_W;
+    const gap = DRAG_HANDLE_GAP;
+
+    const handleX = x;
+    const handleY = yy;
+
+    const tableX = x + handleW + gap;
+    const tableW = Math.max(0, w - handleW - gap);
+
+    ctx.save();
+
+    // handle
+    ctx.globalAlpha = 0.92;
+    ctx.fillStyle = "#232323";
+    roundRectPath(ctx, handleX, handleY, handleW, hh, 7);
+    ctx.fill();
+
+    ctx.globalAlpha = 0.85;
+    ctx.strokeStyle = "#3f3f3f";
+    ctx.lineWidth = 1;
+    roundRectPath(ctx, handleX, handleY, handleW, hh, 7);
+    ctx.stroke();
+
+    if (this._hover === "drag" || this._dragging) drawHoverOverlay(ctx, handleX, handleY, handleW, hh, false);
+    drawGripDots(ctx, handleX, handleY, handleW, hh, this._dragging);
+
+    // body
+    ctx.globalAlpha = 0.92;
+    ctx.fillStyle = "#262626";
+    roundRectPath(ctx, tableX, yy, tableW, hh, 7);
+    ctx.fill();
+
+    ctx.globalAlpha = 0.85;
+    ctx.strokeStyle = "#3f3f3f";
+    ctx.lineWidth = 1;
+    roundRectPath(ctx, tableX, yy, tableW, hh, 7);
+    ctx.stroke();
+
+    if (this._hover === "edit") drawHoverOverlay(ctx, tableX, yy, tableW, hh, false);
+
+    // text
+    ctx.globalAlpha = 1.0;
+    ctx.fillStyle = LiteGraph.WIDGET_TEXT_COLOR;
+
+    const prevFont = ctx.font;
+    const prevAlign = ctx.textAlign;
+    const prevBase = ctx.textBaseline;
+
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+
+    const mid = yy + hh / 2;
+
+    ctx.save();
+    ctx.globalAlpha = 0.80;
+    ctx.fillText("Additional prompt:", tableX + 10, mid - 9);
+    ctx.restore();
+
+    const raw = String(this.value.text ?? "").replace(/\r/g, "");
+    const firstLine = (raw.split("\n")[0] ?? "").trim();
+    const preview = firstLine || "(click to edit)";
+
+    ctx.save();
+    ctx.globalAlpha = 0.95;
+    const maxW = Math.max(0, tableW - 20);
+    ctx.fillText(ellipsizeToWidth(ctx, preview, maxW), tableX + 10, mid + 9);
+    ctx.restore();
+
+    ctx.font = prevFont;
+    ctx.textAlign = prevAlign;
+    ctx.textBaseline = prevBase;
+
+    ctx.restore();
+
+    if (!ghost) {
+      this._bounds.drag = [handleX, handleY, handleW, hh];
+      this._bounds.edit = [tableX, yy, tableW, hh];
+    }
+  }
+
+  draw(ctx, node, _width, y) {
+    const d = node?._vslinxDrag;
+    if (d?.row === this && this._dragging) {
+      this._rowY = y;
+      return;
+    }
+    this._render(ctx, node, _width, y, { ghost: false });
+  }
+
+  mouse(event, pos, node) {
+    const t = event?.type || "";
+    const isDown = (t === "pointerdown" || t === "mousedown");
+    const isMove = (t === "pointermove" || t === "mousemove");
+    const isUp = (
+      t === "pointerup" || t === "mouseup" ||
+      t === "pointercancel" || t === "mouseleave" || t === "pointerleave"
+    );
+
+    if (this._dragging) {
+      if (isMove) {
+        const buttons = typeof event?.buttons === "number" ? event.buttons : 1;
+        if ((buttons & 1) === 0) {
+          endDrag(node, false);
+          return true;
+        }
+
+        const d = node._vslinxDrag;
+        if (!d) return true;
+
+        const pointerY = pos?.[1];
+        if (typeof pointerY === "number") {
+          d.ghostY = pointerY - d.offsetY;
+
+          const probeY = d.ghostY + ROW_HEIGHT * DRAG_SNAP_FRACTION;
+          const lastProbeY = (typeof d.lastProbeY === "number") ? d.lastProbeY : probeY;
+          const dirY = probeY - lastProbeY;
+          d.lastProbeY = probeY;
+
+          const targetIndex = computeTargetIndex(node, probeY, this, dirY);
+          const rows = getRowsInOrder(node);
+          const currentIndex = rows.indexOf(this);
+          const clampedTarget = Math.max(0, Math.min(targetIndex, rows.length - 1));
+          if (clampedTarget !== currentIndex) {
+            reorderDraggedRow(node, this, clampedTarget);
+          }
+
+          node.setDirtyCanvas(true, true);
+        }
+
+        this._hover = "drag";
+        setCanvasCursor("grabbing");
+        return true;
+      }
+
+      if (isUp) {
+        endDrag(node, true);
+        return true;
+      }
+
+      return true;
+    }
+
+    if (!isDown) return false;
+    if (event.button !== 0) return false;
+
+    const part = this._hitPart(pos);
+
+    if (part === "drag") {
+      const rows = getRowsInOrder(node);
+      const startIndex = rows.indexOf(this);
+
+      this._dragging = true;
+      this._hover = "drag";
+
+      const pointerY = pos?.[1] ?? 0;
+      const rowTop = typeof this._rowY === "number" ? this._rowY : pointerY;
+      const offsetY = pointerY - rowTop;
+
+      node._vslinxDrag = {
+        row: this,
+        offsetY,
+        ghostY: rowTop,
+        originalRows: rows.slice(),
+        startIndex,
+        lastProbeY: rowTop + ROW_HEIGHT * DRAG_SNAP_FRACTION,
+      };
+
+      vslinxDragNode = node;
+
+      setCanvasCursor("grabbing");
+      node.setDirtyCanvas(true, true);
+
+      return true;
+    }
+
+    if (part === "edit") {
+      showAdditionalPromptModal(this.value.text || "").then((txt) => {
+        if (txt === null) return;
+        this.value.text = String(txt ?? "");
+        layoutWidgets(node);
+        node.setDirtyCanvas(true, true);
+      });
+      return true;
+    }
+
+    return false;
+  }
+}
+
+function ensureExtraPromptRow(node) {
+  const existing = (node.widgets || []).find(isExtraPromptRow);
+  if (existing) return existing;
+
+  const w = new ExtraPromptWidget(EXTRA_PROMPT_NAME);
+  w._vslinx_id = EXTRA_PROMPT_ID;
+  node.addCustomWidget(w);
+
+  layoutWidgets(node);
+  return w;
+}
+
+/* ---------------------------- CsvRowWidget ---------------------------- */
 
 class CsvRowWidget {
   constructor(name) {
     this.name = name;
     this.type = "custom";
-    this.value = { type: "CsvRowWidget", file: "", key: "(None)" };
+    this.value = { type: "CsvRowWidget", file: "", key: "(None)", order: 0 };
     this._labels = [];
     this._map = {};
     this._hover = null;
@@ -1193,7 +1593,6 @@ class CsvRowWidget {
 
           const probeY = d.ghostY + ROW_HEIGHT * DRAG_SNAP_FRACTION;
 
-          // Direction tracking (for hysteresis)
           const lastProbeY = (typeof d.lastProbeY === "number") ? d.lastProbeY : probeY;
           const dirY = probeY - lastProbeY;
           d.lastProbeY = probeY;
@@ -1289,6 +1688,8 @@ class CsvRowWidget {
   }
 }
 
+/* ---------------------------- Extension setup ---------------------------- */
+
 app.registerExtension({
   name: "vslinx.multilang_csv_prompt_picker",
   async nodeCreated(node) {
@@ -1376,7 +1777,6 @@ app.registerExtension({
       vslinxHoverNode = this;
 
       const rows = getRowWidgets(this);
-
       if (rows.some((r) => r?._dragging)) {
         setCanvasCursor("grabbing");
         return;
@@ -1428,6 +1828,15 @@ app.registerExtension({
       ensureSelectButton(node);
 
       const vals = info?.widgets_values || [];
+
+      // Extra prompt
+      const savedExtra = vals.find((v) => v && v.type === "ExtraPromptWidget");
+      const extra = ensureExtraPromptRow(node);
+      if (savedExtra && typeof savedExtra === "object") {
+        extra.value = { ...extra.value, ...savedExtra };
+      }
+
+      // CSV rows
       const savedRows = vals.filter((v) => v && v.type === "CsvRowWidget" && v.file);
 
       node._csvRowCounter = 0;
@@ -1435,7 +1844,7 @@ app.registerExtension({
         node._csvRowCounter += 1;
         const row = new CsvRowWidget("csv_" + node._csvRowCounter);
         node.addCustomWidget(row);
-        row.value = { ...v };
+        row.value = { ...row.value, ...v };
         row.setFile(v.file).then(() => {
           row.value.key = v.key ?? "(None)";
           layoutWidgets(node);
@@ -1445,15 +1854,28 @@ app.registerExtension({
 
       node._vslinxDrag = null;
 
+      // Sort rows by saved order
+      const rows = getRowWidgets(node).slice();
+      rows.sort((a, b) => {
+        const ao = Number.isFinite(a?.value?.order) ? a.value.order : 0;
+        const bo = Number.isFinite(b?.value?.order) ? b.value.order : 0;
+        if (ao !== bo) return ao - bo;
+        return 0;
+      });
+      const nonRows = (node.widgets || []).filter((w) => !isRowWidget(w));
+      node.widgets = [...nonRows, ...rows];
       layoutWidgets(node);
+
       recomputeNodeSize(node);
       node.setDirtyCanvas(true, true);
     };
 
+    // initial
     removeAllVslinxUiWidgets(node);
     ensureListTopSpacer(node, 10);
     ensureButtonSpacer(node, 10);
     ensureSelectButton(node);
+    ensureExtraPromptRow(node);
 
     node._vslinxDrag = null;
 
