@@ -187,8 +187,6 @@ async function listPromptFiles() {
   return Array.isArray(json?.files) ? json.files : [];
 }
 
-/* ---------------------------- Modal helpers ---------------------------- */
-
 function showAdditionalPromptModal(currentText = "") {
   return new Promise((resolve) => {
     const overlay = document.createElement("div");
@@ -306,8 +304,6 @@ function showAdditionalPromptModal(currentText = "") {
     }, 0);
   });
 }
-
-/* ---------------------------- other modals ---------------------------- */
 
 function showConflictModal({ filename, suggested }) {
   return new Promise((resolve) => {
@@ -548,11 +544,16 @@ function showFilePickerModal(files, current = "") {
   });
 }
 
-function showKeyPickerMenu(items, event, titleText = "Selection") {
+function showKeyPickerMenu(items, event, titleText = "Selection", opts = {}) {
   return new Promise((resolve) => {
     const ev = event?.originalEvent || event?.detail?.event || event;
     const cx = typeof ev?.clientX === "number" ? ev.clientX : 0;
     const cy = typeof ev?.clientY === "number" ? ev.clientY : 0;
+
+    const initialSelected = Array.isArray(opts?.selected) ? opts.selected.map(String) : [];
+
+    let multiMode = false;
+    const selected = new Set(initialSelected);
 
     const overlay = document.createElement("div");
     overlay.style.position = "fixed";
@@ -583,15 +584,84 @@ function showKeyPickerMenu(items, event, titleText = "Selection") {
     title.style.fontWeight = "600";
     title.style.opacity = "0.95";
 
+    const filterRow = document.createElement("div");
+    filterRow.style.display = "flex";
+    filterRow.style.gap = "8px";
+    filterRow.style.alignItems = "center";
+
     const search = document.createElement("input");
     search.type = "text";
     search.placeholder = "Filter";
+    search.style.flex = "1";
     search.style.padding = "9px 10px";
     search.style.borderRadius = "10px";
     search.style.border = "1px solid #555";
     search.style.background = "#2b2b2b";
     search.style.color = "#eee";
     search.style.outline = "none";
+
+    const modeBtn = document.createElement("button");
+    modeBtn.style.width = "36px";
+    modeBtn.style.height = "36px";
+    modeBtn.style.borderRadius = "10px";
+    modeBtn.style.border = "1px solid #555";
+    modeBtn.style.background = "#2b2b2b";
+    modeBtn.style.color = "#eee";
+    modeBtn.style.cursor = "pointer";
+    modeBtn.style.display = "grid";
+    modeBtn.style.placeItems = "center";
+    modeBtn.style.padding = "0";
+
+    function setModeButtonVisual() {
+      if (!multiMode) {
+        modeBtn.style.background = "#2b2b2b";
+        modeBtn.style.borderColor = "#555";
+        modeBtn.textContent = "⧉";
+        modeBtn.title = "Enable multi-select";
+      } else {
+        modeBtn.style.background = "#1f3a25";
+        modeBtn.style.borderColor = "#2d7a40";
+        modeBtn.textContent = "✓";
+        modeBtn.title = "Confirm selection";
+      }
+    }
+
+    setModeButtonVisual();
+
+    modeBtn.onclick = (e) => {
+      e.preventDefault?.();
+      e.stopPropagation?.();
+
+      if (!multiMode) {
+        multiMode = true;
+        selected.delete("(None)");
+        setModeButtonVisual();
+        render(search.value);
+        return;
+      }
+
+      const chosen = Array.from(selected)
+        .map(String)
+        .filter((s) => s && s !== "(None)");
+
+      cleanup();
+      if (overlay.parentNode) document.body.removeChild(overlay);
+
+      if (chosen.length === 0) {
+        resolve({ mode: "clear" });
+        return;
+      }
+      if (chosen.length === 1) {
+        const one = chosen[0];
+        const pickedItem = (items || []).find((it) => String(it?.content ?? "") === one) || { content: one };
+        resolve({ mode: "single", picked: pickedItem });
+        return;
+      }
+      resolve({ mode: "multi", selected: chosen });
+    };
+
+    filterRow.appendChild(search);
+    filterRow.appendChild(modeBtn);
 
     const list = document.createElement("div");
     list.style.maxHeight = "320px";
@@ -601,6 +671,7 @@ function showKeyPickerMenu(items, event, titleText = "Selection") {
     list.style.background = "#181818";
 
     const close = () => {
+      cleanup();
       if (overlay.parentNode) document.body.removeChild(overlay);
       resolve(null);
     };
@@ -611,6 +682,9 @@ function showKeyPickerMenu(items, event, titleText = "Selection") {
 
     const onKeyDown = (e) => {
       if (e.key === "Escape") close();
+      if (multiMode && (e.key === "Enter" || e.key === "Return")) {
+        modeBtn.onclick(e);
+      }
     };
 
     document.addEventListener("keydown", onKeyDown, true);
@@ -619,19 +693,66 @@ function showKeyPickerMenu(items, event, titleText = "Selection") {
       document.removeEventListener("keydown", onKeyDown, true);
     };
 
-    const finalize = (val) => {
-      cleanup();
-      if (overlay.parentNode) document.body.removeChild(overlay);
-      resolve(val);
-    };
+    function addClearRow() {
+      const row = document.createElement("div");
+      row.style.display = "flex";
+      row.style.alignItems = "center";
+      row.style.gap = "8px";
+      row.style.padding = "9px 10px";
+      row.style.cursor = "pointer";
+      row.style.borderBottom = "1px solid #222";
+      row.style.whiteSpace = "nowrap";
+      row.style.overflow = "hidden";
+      row.style.background = "transparent";
+
+      const label = document.createElement("div");
+      label.textContent = "Clear";
+      label.style.flex = "1";
+      label.style.opacity = "0.95";
+
+      const mark = document.createElement("div");
+      mark.style.width = "18px";
+      mark.style.minWidth = "18px";
+      mark.style.textAlign = "center";
+      mark.style.opacity = "0.9";
+      mark.textContent = selected.size ? "↺" : "";
+
+      row.onmouseenter = () => (row.style.background = "#232323");
+      row.onmouseleave = () => (row.style.background = "transparent");
+
+      row.onclick = (e) => {
+        e.preventDefault?.();
+        e.stopPropagation?.();
+        selected.clear();
+        render(search.value);
+      };
+
+      row.appendChild(label);
+      row.appendChild(mark);
+
+      const wrap = document.createElement("div");
+      wrap.style.paddingBottom = "6px";
+      wrap.appendChild(row);
+      list.appendChild(wrap);
+
+      const sep = document.createElement("div");
+      sep.style.height = "1px";
+      sep.style.background = "#222";
+      sep.style.margin = "6px 0 8px 0";
+      list.appendChild(sep);
+    }
 
     function render(filterText) {
       list.innerHTML = "";
       const f = (filterText || "").trim().toLowerCase();
+
       const shown = (items || []).filter((it) => {
         const t = String(it?.content ?? "");
+        if (multiMode && t === "(None)") return false;
         return !f || t.toLowerCase().includes(f);
       });
+
+      if (multiMode) addClearRow();
 
       if (!shown.length) {
         const empty = document.createElement("div");
@@ -643,24 +764,68 @@ function showKeyPickerMenu(items, event, titleText = "Selection") {
       }
 
       for (const it of shown) {
+        const content = String(it?.content ?? "");
         const row = document.createElement("div");
-        row.textContent = String(it?.content ?? "");
+        row.style.display = "flex";
+        row.style.alignItems = "center";
+        row.style.gap = "8px";
         row.style.padding = "9px 10px";
         row.style.cursor = "pointer";
         row.style.borderBottom = "1px solid #222";
         row.style.whiteSpace = "nowrap";
         row.style.overflow = "hidden";
-        row.style.textOverflow = "ellipsis";
 
-        row.onmouseenter = () => (row.style.background = "#232323");
-        row.onmouseleave = () => (row.style.background = "transparent");
+        const label = document.createElement("div");
+        label.textContent = content;
+        label.style.flex = "1";
+        label.style.overflow = "hidden";
+        label.style.textOverflow = "ellipsis";
+
+        const mark = document.createElement("div");
+        mark.style.width = "18px";
+        mark.style.minWidth = "18px";
+        mark.style.textAlign = "center";
+        mark.style.opacity = "0.95";
+
+        const isSel = selected.has(content);
+        if (multiMode) {
+          mark.textContent = isSel ? "✓" : "";
+          row.style.background = isSel ? "#242e25" : "transparent";
+        } else {
+          mark.textContent = "";
+          row.style.background = "transparent";
+        }
+
+        row.onmouseenter = () => {
+          row.style.background = multiMode
+            ? (selected.has(content) ? "#283328" : "#232323")
+            : "#232323";
+        };
+        row.onmouseleave = () => {
+          row.style.background = multiMode
+            ? (selected.has(content) ? "#242e25" : "transparent")
+            : "transparent";
+        };
 
         row.onclick = (e) => {
           e.preventDefault?.();
           e.stopPropagation?.();
-          finalize(it);
+
+          if (!multiMode) {
+            cleanup();
+            if (overlay.parentNode) document.body.removeChild(overlay);
+            resolve({ mode: "single", picked: it });
+            return;
+          }
+
+          if (selected.has(content)) selected.delete(content);
+          else selected.add(content);
+
+          render(search.value);
         };
 
+        row.appendChild(label);
+        row.appendChild(mark);
         list.appendChild(row);
       }
     }
@@ -668,7 +833,7 @@ function showKeyPickerMenu(items, event, titleText = "Selection") {
     search.oninput = () => render(search.value);
 
     card.appendChild(title);
-    card.appendChild(search);
+    card.appendChild(filterRow);
     card.appendChild(list);
     overlay.appendChild(card);
     document.body.appendChild(overlay);
@@ -738,8 +903,6 @@ async function uploadWithConflictResolution(file) {
   return { cancelled: false, overwriteWasChosen, up };
 }
 
-/* ---------------------------- Layout helpers ---------------------------- */
-
 function getRowWidgets(node) {
   return (node.widgets || []).filter((w) => {
     const t = w?.value?.type;
@@ -786,7 +949,7 @@ const BUTTON_ID = "vslinx_select_csv_button";
 const BUTTON_LABEL = "Select CSV File";
 
 const EXTRA_PROMPT_ID = "vslinx_extra_prompt_row";
-const EXTRA_PROMPT_NAME = "csv_additional_prompt"; // must start with csv_ so Python sees it
+const EXTRA_PROMPT_NAME = "csv_additional_prompt";
 
 const LIST_SIDE_MARGIN = (globalThis?.LiteGraph?.NODE_WIDGET_MARGIN ?? 10);
 const ROW_HEIGHT = 54;
@@ -798,18 +961,10 @@ const DRAG_SNAP_EXIT = 0.65;
 const DRAG_HANDLE_W = 22;
 const DRAG_HANDLE_GAP = 8;
 
-function isListTopSpacer(w) {
-  return w?._vslinx_id === LIST_TOP_SPACER_ID;
-}
-function isButtonSpacer(w) {
-  return w?._vslinx_id === BUTTON_SPACER_ID;
-}
-function isBottomButton(w) {
-  return w?._vslinx_id === BUTTON_ID;
-}
-function isExtraPromptRow(w) {
-  return w?._vslinx_id === EXTRA_PROMPT_ID;
-}
+function isListTopSpacer(w) { return w?._vslinx_id === LIST_TOP_SPACER_ID; }
+function isButtonSpacer(w) { return w?._vslinx_id === BUTTON_SPACER_ID; }
+function isBottomButton(w) { return w?._vslinx_id === BUTTON_ID; }
+function isExtraPromptRow(w) { return w?._vslinx_id === EXTRA_PROMPT_ID; }
 
 function updateRowOrders(node) {
   const rows = getRowWidgets(node);
@@ -932,9 +1087,7 @@ function ensureSelectButton(node) {
         const row = new CsvRowWidget("csv_" + node._csvRowCounter);
         node.addCustomWidget(row);
 
-        // place at end (before button)
         row.value.order = getRowWidgets(node).length;
-
         await row.setFile(filename);
 
         layoutWidgets(node);
@@ -1093,8 +1246,6 @@ function endDrag(node, commit = true) {
   node.setDirtyCanvas(true, true);
 }
 
-/* ---------------------------- ExtraPromptWidget ---------------------------- */
-
 class ExtraPromptWidget {
   constructor(name) {
     this.name = name;
@@ -1109,13 +1260,8 @@ class ExtraPromptWidget {
     };
   }
 
-  computeSize() {
-    return [0, ROW_HEIGHT];
-  }
-
-  serializeValue() {
-    return this.value;
-  }
+  computeSize() { return [0, ROW_HEIGHT]; }
+  serializeValue() { return this.value; }
 
   _hitPart(pos) {
     const x = pos[0];
@@ -1148,7 +1294,6 @@ class ExtraPromptWidget {
 
     ctx.save();
 
-    // handle
     ctx.globalAlpha = 0.92;
     ctx.fillStyle = "#232323";
     roundRectPath(ctx, handleX, handleY, handleW, hh, 7);
@@ -1163,7 +1308,6 @@ class ExtraPromptWidget {
     if (this._hover === "drag" || this._dragging) drawHoverOverlay(ctx, handleX, handleY, handleW, hh, false);
     drawGripDots(ctx, handleX, handleY, handleW, hh, this._dragging);
 
-    // body
     ctx.globalAlpha = 0.92;
     ctx.fillStyle = "#262626";
     roundRectPath(ctx, tableX, yy, tableW, hh, 7);
@@ -1177,7 +1321,6 @@ class ExtraPromptWidget {
 
     if (this._hover === "edit") drawHoverOverlay(ctx, tableX, yy, tableW, hh, false);
 
-    // text
     ctx.globalAlpha = 1.0;
     ctx.fillStyle = LiteGraph.WIDGET_TEXT_COLOR;
 
@@ -1338,13 +1481,11 @@ function ensureExtraPromptRow(node) {
   return w;
 }
 
-/* ---------------------------- CsvRowWidget ---------------------------- */
-
 class CsvRowWidget {
   constructor(name) {
     this.name = name;
     this.type = "custom";
-    this.value = { type: "CsvRowWidget", file: "", key: "(None)", order: 0 };
+    this.value = { type: "CsvRowWidget", file: "", key: "(None)", keys: [], order: 0 };
     this._labels = [];
     this._map = {};
     this._hover = null;
@@ -1359,26 +1500,55 @@ class CsvRowWidget {
     };
   }
 
-  computeSize() {
-    return [0, ROW_HEIGHT];
-  }
+  computeSize() { return [0, ROW_HEIGHT]; }
 
   async setFile(filename) {
     this.value.file = filename;
     this.value.key = "(None)";
+    this.value.keys = [];
     const data = await readPromptFile(filename);
     this._labels = ["(None)", "Random", ...(data.labels || [])];
     this._map = data.map || {};
   }
 
-  serializeValue() {
-    return this.value;
+  serializeValue() { return this.value; }
+
+  _getKeysEffective() {
+    if (Array.isArray(this.value.key)) {
+      return this.value.key.map(String).filter((s) => s && s !== "(None)");
+    }
+
+    const keys = Array.isArray(this.value.keys) ? this.value.keys.map(String).filter(Boolean) : [];
+    if (keys.length) return keys.filter((s) => s !== "(None)");
+
+    const k = String(this.value.key ?? "");
+    if (!k || k === "(None)") return [];
+    return [k];
+  }
+
+  _getSelPreviewText() {
+    const keys = this._getKeysEffective();
+    if (!keys.length) return "(None)";
+    if (keys.length === 1) return keys[0];
+    return `${keys.length} selected`;
   }
 
   _getOutPreview() {
-    if (!this.value.key || this.value.key === "(None)") return "";
-    if (this.value.key === "Random") return "(random pick at runtime)";
-    return this._map[this.value.key] ?? "";
+    const keys = this._getKeysEffective();
+    if (!keys.length) return "";
+
+    const outs = [];
+    for (const k of keys) {
+      if (!k || k === "(None)") continue;
+      if (k === "Random") {
+        outs.push("(random pick at runtime)");
+        continue;
+      }
+      const v = this._map[k];
+      if (v) outs.push(v);
+    }
+    if (!outs.length) return "";
+    return outs.join(" | ");
   }
 
   async _handlePickFile(node) {
@@ -1537,7 +1707,8 @@ class CsvRowWidget {
     drawSmallX(ctx, remX + 4, topY + 4, removeW - 8, topH - 8, "#e05555");
 
     const botMid = botY + botH / 2;
-    const selText = this.value.key ?? "(None)";
+
+    const selText = this._getSelPreviewText();
     drawClippedText(ctx, selText, selX, botMid, selW, botH);
 
     const outVal = this._getOutPreview();
@@ -1672,13 +1843,56 @@ class CsvRowWidget {
         content: label,
         callback: () => {
           this.value.key = label;
+          this.value.keys = [];
           node.setDirtyCanvas(true, true);
         },
       }));
 
-      showKeyPickerMenu(items, event, "Selection").then((picked) => {
-        if (!picked) return;
-        picked.callback?.();
+      const preselected =
+        Array.isArray(this.value.key) ? this.value.key :
+          (Array.isArray(this.value.keys) && this.value.keys.length)
+            ? this.value.keys
+            : (this.value.key && this.value.key !== "(None)" ? [String(this.value.key)] : []);
+
+      showKeyPickerMenu(items, event, "Selection", { selected: preselected }).then((result) => {
+        if (!result) return;
+
+        if (result.mode === "single") {
+          const picked = String(result.picked?.content ?? "");
+          if (!picked || picked === "(None)") {
+            this.value.key = "(None)";
+            this.value.keys = [];
+          } else {
+            this.value.key = picked;
+            this.value.keys = [];
+          }
+          node.setDirtyCanvas(true, true);
+          return;
+        }
+
+        if (result.mode === "clear") {
+          this.value.key = "(None)";
+          this.value.keys = [];
+          node.setDirtyCanvas(true, true);
+          return;
+        }
+
+        if (result.mode === "multi") {
+          const chosen = Array.isArray(result.selected) ? result.selected : [];
+          const cleaned = chosen.map(String).filter((s) => s && s !== "(None)");
+
+          if (cleaned.length <= 1) {
+            const one = cleaned[0] || "(None)";
+            this.value.key = one;
+            this.value.keys = [];
+          } else {
+            this.value.key = cleaned.slice();
+            this.value.keys = cleaned.slice();
+          }
+
+          node.setDirtyCanvas(true, true);
+          return;
+        }
       });
 
       return true;
@@ -1687,8 +1901,6 @@ class CsvRowWidget {
     return false;
   }
 }
-
-/* ---------------------------- Extension setup ---------------------------- */
 
 app.registerExtension({
   name: "vslinx.multilang_csv_prompt_picker",
@@ -1829,14 +2041,12 @@ app.registerExtension({
 
       const vals = info?.widgets_values || [];
 
-      // Extra prompt
       const savedExtra = vals.find((v) => v && v.type === "ExtraPromptWidget");
       const extra = ensureExtraPromptRow(node);
       if (savedExtra && typeof savedExtra === "object") {
         extra.value = { ...extra.value, ...savedExtra };
       }
 
-      // CSV rows
       const savedRows = vals.filter((v) => v && v.type === "CsvRowWidget" && v.file);
 
       node._csvRowCounter = 0;
@@ -1844,9 +2054,21 @@ app.registerExtension({
         node._csvRowCounter += 1;
         const row = new CsvRowWidget("csv_" + node._csvRowCounter);
         node.addCustomWidget(row);
-        row.value = { ...row.value, ...v };
+
+        const merged = { ...row.value, ...v };
+        if (!Array.isArray(merged.keys)) merged.keys = [];
+
+        if (Array.isArray(merged.key)) {
+          merged.keys = merged.key.slice();
+        }
+
+        row.value = merged;
+
         row.setFile(v.file).then(() => {
           row.value.key = v.key ?? "(None)";
+          if (Array.isArray(v.key)) row.value.keys = v.key.slice();
+          if (Array.isArray(v.keys) && v.keys.length && !Array.isArray(row.value.key)) row.value.keys = v.keys.slice();
+
           layoutWidgets(node);
           node.setDirtyCanvas(true, true);
         });
@@ -1854,7 +2076,6 @@ app.registerExtension({
 
       node._vslinxDrag = null;
 
-      // Sort rows by saved order
       const rows = getRowWidgets(node).slice();
       rows.sort((a, b) => {
         const ao = Number.isFinite(a?.value?.order) ? a.value.order : 0;
@@ -1870,7 +2091,6 @@ app.registerExtension({
       node.setDirtyCanvas(true, true);
     };
 
-    // initial
     removeAllVslinxUiWidgets(node);
     ensureListTopSpacer(node, 10);
     ensureButtonSpacer(node, 10);

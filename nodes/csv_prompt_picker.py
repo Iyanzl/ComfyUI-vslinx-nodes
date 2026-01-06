@@ -4,7 +4,7 @@ import csv
 import time
 import random
 import hashlib
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple, Optional, Any
 
 import folder_paths
 from aiohttp import web
@@ -307,6 +307,45 @@ async def vslinx_csv_prompt_list(request: web.Request):
         return web.json_response({"error": f"Failed to list files: {e}"}, status=500)
 
 
+def _normalize_selected_keys(row: Dict[str, Any]) -> List[str]:
+    """
+    Backwards + forwards compatible:
+
+    Old UI:
+      row["key"] = "label"
+
+    New UI multi-select:
+      row["keys"] = ["a","b"]
+      OR (older intermediate builds):
+      row["key"] = ["a","b"]
+
+    Returns a cleaned list of keys (strings), in user-selected order.
+    """
+    key = row.get("key", None)
+    keys = row.get("keys", None)
+
+    selected: List[Any] = []
+
+    if isinstance(keys, (list, tuple)) and len(keys) > 0:
+        selected = list(keys)
+    elif isinstance(key, (list, tuple)) and len(key) > 0:
+        selected = list(key)
+    elif isinstance(key, str):
+        selected = [key]
+    elif key is not None:
+        selected = [str(key)]
+
+    out: List[str] = []
+    for k in selected:
+        if k is None:
+            continue
+        s = str(k).strip()
+        if not s or s == "(None)":
+            continue
+        out.append(s)
+    return out
+
+
 class VSLinx_MultiLangPromptPicker:
     CATEGORY = "vsLinx/utility"
     FUNCTION = "run"
@@ -345,7 +384,6 @@ class VSLinx_MultiLangPromptPicker:
 
         rng = random.Random(eff_seed)
 
-        # Collect both CsvRowWidget and ExtraPromptWidget, sorted by 'order'
         items = []
         for k, v in kwargs.items():
             if not (isinstance(k, str) and k.lower().startswith("csv_")):
@@ -376,7 +414,6 @@ class VSLinx_MultiLangPromptPicker:
 
             if vtype == "CsvRowWidget":
                 filename = v.get("file")
-                key = v.get("key")
 
                 if not filename or not isinstance(filename, str):
                     continue
@@ -390,19 +427,23 @@ class VSLinx_MultiLangPromptPicker:
                 if not labels:
                     continue
 
-                if not key or key == "(None)":
+                selected_keys = _normalize_selected_keys(v)
+                if not selected_keys:
                     continue
 
-                original_key = key
-                if key == "Random":
-                    key = rng.choice(labels)
+                for original_key in selected_keys:
+                    key = original_key
 
-                out = mapping.get(key, "")
-                if out and out.strip():
-                    out = out.strip()
-                    final_parts.append(out)
-                    sel_preview.append(f"🔀 {key}" if original_key == "Random" else f"🧾 {key}")
-                    out_preview.append(f"💬 {out}")
+                    if key == "Random":
+                        key = rng.choice(labels)
+
+                    out = mapping.get(key, "")
+                    if out and isinstance(out, str) and out.strip():
+                        out = out.strip()
+                        final_parts.append(out)
+                        sel_preview.append(f"🔀 {key}" if original_key == "Random" else f"🧾 {key}")
+                        out_preview.append(f"💬 {out}")
+
                 continue
 
             if vtype == "ExtraPromptWidget":
@@ -414,7 +455,6 @@ class VSLinx_MultiLangPromptPicker:
                 if not text:
                     continue
 
-                # Insert additional prompt in-line at its position
                 final_parts.append(text)
 
                 sel_preview.append("📝 Additional prompt")
