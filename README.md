@@ -116,7 +116,7 @@ You can then select `猫` inside the node UI (in your language), and the node wi
 
 You can find a full explanation on how to use it in the documentation for the node either inside comfyui itself by clicking on the (i)-Button above the node or [here](https://github.com/vslinx/ComfyUI-vslinx-nodes/blob/main/web/docs/vsLinx_MultiLangPromptPicker.md) on github.
 
-<img width="1202" height="695" alt="Image" src="https://github.com/user-attachments/assets/72818efa-c8d1-44db-b863-3e65084121c4" />
+<img width="629" height="630" alt="Image" src="https://github.com/user-attachments/assets/25be7816-4991-45f4-89a4-95f53e9b3b1b" />
 
 ### Inpaint helper
 #### Fit Image into BBox Mask
