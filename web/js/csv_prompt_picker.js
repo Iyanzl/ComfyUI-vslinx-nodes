@@ -99,6 +99,35 @@ function drawHoverOverlay(ctx, x, y, w, h, danger = false) {
   ctx.restore();
 }
 
+function drawGripDots(ctx, x, y, w, h, active = false) {
+  ctx.save();
+  ctx.globalAlpha = active ? 0.92 : 0.72;
+  ctx.fillStyle = "#d0d0d0";
+  const cols = 2;
+  const rows = 3;
+  const r = Math.max(1.2, Math.min(w, h) * 0.07);
+  const gapX = Math.max(r * 2.2, w * 0.18);
+  const gapY = Math.max(r * 2.2, h * 0.14);
+
+  const gridW = gapX * (cols - 1);
+  const gridH = gapY * (rows - 1);
+
+  const cx0 = x + w / 2 - gridW / 2;
+  const cy0 = y + h / 2 - gridH / 2;
+
+  for (let ry = 0; ry < rows; ry++) {
+    for (let cx = 0; cx < cols; cx++) {
+      const px = cx0 + cx * gapX;
+      const py = cy0 + ry * gapY;
+      ctx.beginPath();
+      ctx.arc(px, py, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  ctx.restore();
+}
+
 function setCanvasCursor(cursor) {
   try {
     const c = app?.canvas?.canvas;
@@ -114,6 +143,10 @@ function clearHoverOnNode(node) {
   for (const w of (node.widgets || [])) {
     if (w?.value?.type === "CsvRowWidget" && w._hover) {
       w._hover = null;
+      changed = true;
+    }
+    if (w?.value?.type === "CsvRowWidget" && w._dragging) {
+      w._dragging = false;
       changed = true;
     }
   }
@@ -613,6 +646,9 @@ const BUTTON_LABEL = "Select CSV File";
 const LIST_SIDE_MARGIN = (globalThis?.LiteGraph?.NODE_WIDGET_MARGIN ?? 10);
 const ROW_HEIGHT = 54;
 
+const DRAG_HANDLE_W = 22;
+const DRAG_HANDLE_GAP = 8;
+
 function isRowWidget(w) {
   return w?.value?.type === "CsvRowWidget";
 }
@@ -758,6 +794,46 @@ function ensureSelectButton(node) {
   return btn;
 }
 
+function reorderRowWidget(node, rowWidget, targetIndex) {
+  const rows = getRowWidgets(node);
+  const from = rows.indexOf(rowWidget);
+  if (from === -1) return false;
+
+  const clamped = Math.max(0, Math.min(targetIndex, rows.length - 1));
+  if (clamped === from) return false;
+
+  rows.splice(from, 1);
+  rows.splice(clamped, 0, rowWidget);
+
+  const others = (node.widgets || []).filter((w) => !isRowWidget(w));
+  node.widgets = [...others, ...rows];
+
+  layoutWidgets(node);
+  recomputeNodeSize(node);
+  node.setDirtyCanvas(true, true);
+  return true;
+}
+
+function targetRowIndexFromLocalY(node, localY) {
+  const rows = getRowWidgets(node);
+  if (!rows.length) return 0;
+
+  let best = 0;
+  let bestDist = Infinity;
+
+  for (let i = 0; i < rows.length; i++) {
+    const ry = rows[i]?._rowY;
+    if (typeof ry !== "number") continue;
+    const mid = ry + ROW_HEIGHT / 2;
+    const d = Math.abs(localY - mid);
+    if (d < bestDist) {
+      bestDist = d;
+      best = i;
+    }
+  }
+  return best;
+}
+
 class CsvRowWidget {
   constructor(name) {
     this.name = name;
@@ -767,7 +843,12 @@ class CsvRowWidget {
     this._map = {};
     this._hover = null;
     this._rowY = null;
+
+    // Drag state (handled entirely via widget.mouse move/up so LiteGraph keeps routing events)
+    this._dragging = false;
+
     this._bounds = {
+      drag: [0, 0, 0, 0],
       file: [0, 0, 0, 0],
       remove: [0, 0, 0, 0],
       sel: [0, 0, 0, 0],
@@ -843,6 +924,7 @@ class CsvRowWidget {
     const y = pos[1];
     const inRect = (r) => x >= r[0] && x <= r[0] + r[2] && y >= r[1] && y <= r[1] + r[3];
 
+    if (inRect(this._bounds.drag)) return "drag";
     if (inRect(this._bounds.remove)) return "remove";
     if (inRect(this._bounds.file)) return "file";
     if (inRect(this._bounds.sel)) return "sel";
@@ -861,51 +943,80 @@ class CsvRowWidget {
     const yy = y + innerPadY;
     const hh = Math.max(0, height - innerPadY * 2);
 
+    const handleW = DRAG_HANDLE_W;
+    const gap = DRAG_HANDLE_GAP;
+
+    const handleX = x;
+    const handleY = yy;
+    const handleH = hh;
+
+    const tableX = x + handleW + gap;
+    const tableW = Math.max(0, w - handleW - gap);
+
     const topH = Math.floor(hh * 0.52);
     const botH = hh - topH;
 
     const topY = yy;
     const botY = yy + topH;
 
-    const removeW = Math.max(28, Math.floor(w * 0.06));
-    const fileW = Math.max(0, w - removeW);
+    const removeW = Math.max(28, Math.floor(tableW * 0.06));
+    const fileW = Math.max(0, tableW - removeW);
 
-    const fileX = x;
-    const remX = x + fileW;
+    const fileX = tableX;
+    const remX = tableX + fileW;
 
-    const selW = Math.floor(w / 2);
-    const outW = w - selW;
-    const selX = x;
-    const outX = x + selW;
+    const selW = Math.floor(tableW / 2);
+    const outW = tableW - selW;
+    const selX = tableX;
+    const outX = tableX + selW;
 
     ctx.save();
 
+    // Drag handle
     ctx.globalAlpha = 0.92;
-    ctx.fillStyle = "#262626";
-    roundRectPath(ctx, x, yy, w, hh, 7);
+    ctx.fillStyle = "#232323";
+    roundRectPath(ctx, handleX, handleY, handleW, handleH, 7);
     ctx.fill();
 
     ctx.globalAlpha = 0.85;
     ctx.strokeStyle = "#3f3f3f";
     ctx.lineWidth = 1;
-    roundRectPath(ctx, x, yy, w, hh, 7);
+    roundRectPath(ctx, handleX, handleY, handleW, handleH, 7);
     ctx.stroke();
 
+    if (this._hover === "drag" || this._dragging) drawHoverOverlay(ctx, handleX, handleY, handleW, handleH, false);
+    drawGripDots(ctx, handleX, handleY, handleW, handleH, this._dragging);
+
+    // Table
+    ctx.globalAlpha = 0.92;
+    ctx.fillStyle = "#262626";
+    roundRectPath(ctx, tableX, yy, tableW, hh, 7);
+    ctx.fill();
+
+    ctx.globalAlpha = 0.85;
+    ctx.strokeStyle = "#3f3f3f";
+    ctx.lineWidth = 1;
+    roundRectPath(ctx, tableX, yy, tableW, hh, 7);
+    ctx.stroke();
+
+    // separators
     ctx.globalAlpha = 0.55;
     ctx.strokeStyle = "#3a3a3a";
     ctx.beginPath();
-    ctx.moveTo(x + 6, botY);
-    ctx.lineTo(x + w - 6, botY);
+    ctx.moveTo(tableX + 6, botY);
+    ctx.lineTo(tableX + tableW - 6, botY);
     ctx.moveTo(remX, topY + 3);
     ctx.lineTo(remX, topY + topH - 3);
     ctx.moveTo(outX, botY + 3);
     ctx.lineTo(outX, botY + botH - 3);
     ctx.stroke();
 
+    // Hover overlays
     if (this._hover === "file") drawHoverOverlay(ctx, fileX, topY, fileW, topH, false);
     else if (this._hover === "remove") drawHoverOverlay(ctx, remX, topY, removeW, topH, true);
     else if (this._hover === "sel") drawHoverOverlay(ctx, selX, botY, selW, botH, false);
 
+    // Text
     ctx.globalAlpha = 1.0;
     ctx.fillStyle = LiteGraph.WIDGET_TEXT_COLOR;
 
@@ -941,6 +1052,8 @@ class CsvRowWidget {
 
     ctx.restore();
 
+    // bounds (local coords)
+    this._bounds.drag = [handleX, handleY, handleW, handleH];
     this._bounds.file = [fileX, topY, fileW, topH];
     this._bounds.remove = [remX, topY, removeW, topH];
     this._bounds.sel = [selX, botY, selW, botH];
@@ -948,13 +1061,63 @@ class CsvRowWidget {
   }
 
   mouse(event, pos, node) {
-    const isLeftClick =
-      (event.type === "pointerdown" || event.type === "mousedown") &&
-      event.button === 0;
+    const t = event?.type || "";
+    const isDown = (t === "pointerdown" || t === "mousedown");
+    const isMove = (t === "pointermove" || t === "mousemove");
+    const isUp = (
+      t === "pointerup" || t === "mouseup" ||
+      t === "pointercancel" || t === "mouseleave" || t === "pointerleave"
+    );
 
-    if (!isLeftClick) return false;
+    // IMPORTANT: while dragging, handle move/up here (LiteGraph will keep routing to this widget)
+    if (this._dragging) {
+      if (isMove) {
+        // If button was released without a proper mouseup (rare), end drag.
+        const buttons = typeof event?.buttons === "number" ? event.buttons : 1;
+        if ((buttons & 1) === 0) {
+          this._dragging = false;
+          this._hover = null;
+          setCanvasCursor("");
+          node.setDirtyCanvas(true, true);
+          return true;
+        }
+
+        const localY = pos?.[1];
+        if (typeof localY === "number") {
+          const idx = targetRowIndexFromLocalY(node, localY);
+          reorderRowWidget(node, this, idx);
+        }
+
+        this._hover = "drag";
+        setCanvasCursor("grabbing");
+        node.setDirtyCanvas(true, true);
+        return true;
+      }
+
+      if (isUp) {
+        this._dragging = false;
+        this._hover = null;
+        setCanvasCursor("");
+        node.setDirtyCanvas(true, true);
+        return true;
+      }
+
+      return true;
+    }
+
+    // Normal click handling
+    if (!isDown) return false;
+    if (event.button !== 0) return false;
 
     const part = this._hitPart(pos);
+
+    if (part === "drag") {
+      this._dragging = true;
+      this._hover = "drag";
+      setCanvasCursor("grabbing");
+      node.setDirtyCanvas(true, true);
+      return true; // must return true so LiteGraph keeps sending move/up to this widget
+    }
 
     if (part === "remove") {
       this._handleRemove(node);
@@ -996,6 +1159,7 @@ app.registerExtension({
 
     node.serialize_widgets = true;
 
+    // Hover cleanup: when leaving node, clear all row hover/drag.
     if (!app.canvas._vslinxHoverPatched) {
       app.canvas._vslinxHoverPatched = true;
 
@@ -1003,8 +1167,6 @@ app.registerExtension({
       app.canvas.processMouseMove = function (e) {
         const r = orig(e);
 
-        // ✅ FIX: if the canvas says we're no longer hovering THIS node (including empty space),
-        // clear the row hover immediately. This avoids the "fast move" lingering hover.
         if (vslinxHoverNode) {
           const over = this.node_over;
           if (over !== vslinxHoverNode) {
@@ -1031,6 +1193,9 @@ app.registerExtension({
         };
         c.addEventListener("mouseleave", clearAll);
         c.addEventListener("pointerleave", clearAll);
+        window.addEventListener("blur", clearAll, true);
+        window.addEventListener("mouseup", clearAll, true);
+        window.addEventListener("pointerup", clearAll, true);
       }
     }
 
@@ -1041,6 +1206,13 @@ app.registerExtension({
       vslinxHoverNode = this;
 
       const rows = getRowWidgets(this);
+
+      // If any row is currently dragging, keep cursor stable and don't fight hover states.
+      if (rows.some((r) => r?._dragging)) {
+        setCanvasCursor("grabbing");
+        return;
+      }
+
       let cursor = "";
       let didAnyChange = false;
 
@@ -1064,7 +1236,8 @@ app.registerExtension({
           didAnyChange = true;
         }
 
-        if (part) cursor = "pointer";
+        if (part === "drag") cursor = "grab";
+        else if (part) cursor = "pointer";
       }
 
       if (didAnyChange) this.setDirtyCanvas(true, true);
