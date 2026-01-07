@@ -596,7 +596,51 @@ function showFilePickerModal(files, current = "") {
 
     let renderSeq = 0;
 
-    function renderFilenameRow(fn, { hits = null } = {}) {
+    const expanded = new Set();
+    expanded.add("");
+
+    function buildTree(paths) {
+      const root = { name: "", path: "", dirs: new Map(), files: [] };
+
+      for (const pRaw of (paths || [])) {
+        const p = String(pRaw ?? "").replace(/\\/g, "/").replace(/^\/+/, "");
+        if (!p) continue;
+
+        const parts = p.split("/").filter(Boolean);
+        if (!parts.length) continue;
+
+        let node = root;
+        for (let i = 0; i < parts.length; i++) {
+          const part = parts[i];
+          const isLast = (i === parts.length - 1);
+
+          if (isLast) {
+            node.files.push({
+              name: part,
+              path: parts.slice(0, i).join("/") ? (parts.slice(0, i).join("/") + "/" + part) : part
+            });
+          } else {
+            const dirPath = parts.slice(0, i + 1).join("/");
+            if (!node.dirs.has(part)) {
+              node.dirs.set(part, { name: part, path: dirPath, dirs: new Map(), files: [] });
+            }
+            node = node.dirs.get(part);
+          }
+        }
+      }
+
+      return root;
+    }
+
+    function sortTree(node) {
+      node.files.sort((a, b) => a.path.toLowerCase().localeCompare(b.path.toLowerCase()));
+      const dirsArr = Array.from(node.dirs.values());
+      dirsArr.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
+      node._dirsSorted = dirsArr;
+      for (const d of dirsArr) sortTree(d);
+    }
+
+    function renderRowBase({ isFolder, label, subLabel = "", depth = 0, isActive = false, danger = false }) {
       const row = document.createElement("div");
       row.style.display = "flex";
       row.style.alignItems = "center";
@@ -607,40 +651,47 @@ function showFilePickerModal(files, current = "") {
       row.style.whiteSpace = "nowrap";
       row.style.overflow = "hidden";
 
-      const nameSpan = document.createElement("span");
-      nameSpan.textContent = fn;
-      nameSpan.style.flex = hits ? "0 0 auto" : "1 1 auto";
-      nameSpan.style.overflow = "hidden";
-      nameSpan.style.textOverflow = "ellipsis";
+      row.style.paddingLeft = `${12 + depth * 16}px`;
 
-      row.appendChild(nameSpan);
-
-      if (Array.isArray(hits) && hits.length) {
-        const hitsSpan = document.createElement("span");
-        hitsSpan.textContent = `(${hits.join(", ")})`;
-        hitsSpan.style.opacity = "0.55";
-        hitsSpan.style.fontSize = "12px";
-        hitsSpan.style.flex = "1 1 auto";
-        hitsSpan.style.overflow = "hidden";
-        hitsSpan.style.textOverflow = "ellipsis";
-        hitsSpan.style.minWidth = "0";
-        row.appendChild(hitsSpan);
-      }
-
-      if (fn === current) {
+      if (isActive) {
         row.style.background = "#2a2a2a";
         row.style.fontWeight = "600";
       }
 
-      row.onmouseenter = () => (row.style.background = fn === current ? "#2f2f2f" : "#232323");
-      row.onmouseleave = () => (row.style.background = fn === current ? "#2a2a2a" : "transparent");
+      row.onmouseenter = () => (row.style.background = isActive ? "#2f2f2f" : (danger ? "#2a1e1e" : "#232323"));
+      row.onmouseleave = () => (row.style.background = isActive ? "#2a2a2a" : "transparent");
 
-      row.onclick = () => {
-        document.body.removeChild(overlay);
-        resolve(fn);
-      };
+      const icon = document.createElement("span");
+      icon.textContent = isFolder ? "📁" : "📄";
+      icon.style.opacity = "0.9";
+      icon.style.flex = "0 0 auto";
 
-      list.appendChild(row);
+      const nameSpan = document.createElement("span");
+      nameSpan.textContent = label;
+      nameSpan.style.flex = "0 1 auto";
+      nameSpan.style.overflow = "hidden";
+      nameSpan.style.textOverflow = "ellipsis";
+
+      row.appendChild(icon);
+      row.appendChild(nameSpan);
+
+      if (subLabel) {
+        const sub = document.createElement("span");
+        sub.textContent = subLabel;
+        sub.style.opacity = "0.55";
+        sub.style.fontSize = "12px";
+        sub.style.flex = "1 1 auto";
+        sub.style.overflow = "hidden";
+        sub.style.textOverflow = "ellipsis";
+        sub.style.minWidth = "0";
+        row.appendChild(sub);
+      } else {
+        const spacer = document.createElement("span");
+        spacer.style.flex = "1 1 auto";
+        row.appendChild(spacer);
+      }
+
+      return row;
     }
 
     function renderEmpty(text) {
@@ -652,33 +703,151 @@ function showFilePickerModal(files, current = "") {
       list.appendChild(empty);
     }
 
+    function flattenTreeVisible(node, out, depth = 0) {
+      const dirs = node._dirsSorted || Array.from(node.dirs.values());
+      for (const d of dirs) {
+        out.push({ kind: "dir", depth, name: d.name, path: d.path, node: d });
+        if (expanded.has(d.path)) {
+          flattenTreeVisible(d, out, depth + 1);
+        }
+      }
+
+      for (const f of (node.files || [])) {
+        out.push({ kind: "file", depth, name: f.name, path: f.path });
+      }
+    }
+
+    function ensurePathExpandedForCurrent(cur) {
+      const p = String(cur ?? "").replace(/\\/g, "/");
+      if (!p || !p.includes("/")) return;
+      const parts = p.split("/").filter(Boolean);
+      let acc = "";
+      for (let i = 0; i < parts.length - 1; i++) {
+        acc = acc ? (acc + "/" + parts[i]) : parts[i];
+        expanded.add(acc);
+      }
+    }
+
     async function render(filterText, inContentsMode) {
       const mySeq = ++renderSeq;
 
       const qRaw = (filterText || "").trim();
       const q = qRaw.toLowerCase();
 
+      ensurePathExpandedForCurrent(current);
+
       if (!inContentsMode) {
-        list.innerHTML = "";
-        const shown = files.filter((fn) => !q || fn.toLowerCase().includes(q));
-        if (!shown.length) {
-          renderEmpty("No matching files.");
+        if (q) {
+          list.innerHTML = "";
+          const shown = (files || []).filter((fn) => !q || String(fn).toLowerCase().includes(q));
+          if (!shown.length) {
+            renderEmpty("No matching files.");
+            return;
+          }
+
+          for (const fn of shown) {
+            const isActive = (String(fn) === String(current));
+            const row = renderRowBase({
+              isFolder: false,
+              label: fn,
+              depth: 0,
+              isActive,
+            });
+
+            row.onclick = () => {
+              document.body.removeChild(overlay);
+              resolve(fn);
+            };
+
+            list.appendChild(row);
+          }
+
           return;
         }
-        for (const fn of shown) renderFilenameRow(fn);
+
+        list.innerHTML = "";
+
+        const tree = buildTree(files || []);
+        sortTree(tree);
+
+        const visible = [];
+        flattenTreeVisible(tree, visible, 0);
+
+        if (!visible.length) {
+          renderEmpty("No .csv files found in input/csv");
+          return;
+        }
+
+        for (const entry of visible) {
+          if (entry.kind === "dir") {
+            const isOpen = expanded.has(entry.path);
+            const label = entry.name;
+            const row = renderRowBase({
+              isFolder: true,
+              label: `${isOpen ? "▼" : "▶"} ${label}`,
+              depth: entry.depth,
+              isActive: false,
+            });
+
+            row.onclick = (e) => {
+              e.preventDefault?.();
+              e.stopPropagation?.();
+
+              if (expanded.has(entry.path)) expanded.delete(entry.path);
+              else expanded.add(entry.path);
+
+              render(search.value, inContentsBtn._active);
+            };
+
+            list.appendChild(row);
+            continue;
+          }
+
+          const isActive = (String(entry.path) === String(current));
+          const row = renderRowBase({
+            isFolder: false,
+            label: entry.name,
+            subLabel: entry.path.includes("/") ? entry.path : "",
+            depth: entry.depth,
+            isActive,
+          });
+
+          row.onclick = () => {
+            document.body.removeChild(overlay);
+            resolve(entry.path);
+          };
+
+          list.appendChild(row);
+        }
+
         return;
       }
 
       if (!qRaw) {
         list.innerHTML = "";
-        for (const fn of files) renderFilenameRow(fn);
+        for (const fn of (files || [])) {
+          const isActive = (String(fn) === String(current));
+          const row = renderRowBase({
+            isFolder: false,
+            label: fn,
+            depth: 0,
+            isActive,
+          });
+
+          row.onclick = () => {
+            document.body.removeChild(overlay);
+            resolve(fn);
+          };
+
+          list.appendChild(row);
+        }
         return;
       }
 
       renderEmpty("Searching contents...");
 
       const results = [];
-      for (const fn of files) {
+      for (const fn of (files || [])) {
         if (mySeq !== renderSeq) return;
 
         let hits = [];
@@ -699,7 +868,23 @@ function showFilePickerModal(files, current = "") {
         return;
       }
 
-      for (const r of results) renderFilenameRow(r.fn, { hits: r.hits });
+      for (const r of results) {
+        const isActive = (String(r.fn) === String(current));
+        const row = renderRowBase({
+          isFolder: false,
+          label: r.fn,
+          subLabel: Array.isArray(r.hits) && r.hits.length ? `(${r.hits.join(", ")})` : "",
+          depth: 0,
+          isActive,
+        });
+
+        row.onclick = () => {
+          document.body.removeChild(overlay);
+          resolve(r.fn);
+        };
+
+        list.appendChild(row);
+      }
     }
 
     let debounceT = null;

@@ -10,9 +10,10 @@ You can then select `猫` inside the node UI (in your language), and the node wi
 
 ## How it works
 - Click **Select CSV File** to upload one or more CSV files into `ComfyUI/input/csv`.
+- You can also **organize existing CSVs into subfolders** inside `ComfyUI/input/csv` (e.g. `input/csv/characters/`, `input/csv/styles/`) to structure your prompt libraries.
 - Each uploaded CSV becomes a row inside the node.
 - Rows can be **freely reordered** by dragging them using the dotted handle on the left.
-- Click the **filename** in a row to switch that row to another CSV that already exists in `input/csv`.
+- Click the **filename** in a row to switch that row to another CSV that already exists in `input/csv` (including subfolders).
 - For each CSV row, choose:
   - `(None)` → ignore this row
   - `Random` → pick a random entry from that CSV (controlled by the node’s seed)
@@ -42,6 +43,7 @@ You can then select `猫` inside the node UI (in your language), and the node wi
 | -------- | ---- | ----------- |
 | Add comma at end? | BOOLEAN | If true and the resulting prompt is not empty, appends a trailing comma. |
 | seed | INT | Seed used for `Random` selections when the workflow seed mode is fixed / increment / decrement / randomize. |
+| pre_text | STRING (input) | Optional text that is prepended to the generated prompt. If both `pre_text` and the generated prompt are present, they are joined with `", "` (or a space if `pre_text` already ends in a comma-like character). |
 
 ## Outputs
 | Output | Type | Description |
@@ -52,6 +54,8 @@ You can then select `猫` inside the node UI (in your language), and the node wi
 
 ## Notes
 - Only `.csv` files are supported.
+- CSV files can be stored in subfolders under `input/csv` and will still be discoverable/selectable (e.g. `styles/anime.csv`).
+- The file picker supports searching filenames, and can also search **inside CSV contents** (keywords across both columns) via the **In Contents?** toggle.
 - `Random` picks are resolved at execution time using the node’s seed behavior.
 - If you upload a CSV that already exists **with identical content**, the node reuses the existing file.
 - If you upload a CSV with the same name but different content, you’ll be prompted to overwrite, rename, or cancel.

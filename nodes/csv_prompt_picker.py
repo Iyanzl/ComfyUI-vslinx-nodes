@@ -59,6 +59,38 @@ def sanitize_prompt_filename(name: str) -> str:
     return name
 
 
+def sanitize_prompt_relpath(rel: str) -> str:
+    rel = (rel or "").replace("\\", "/").strip()
+    rel = "".join(ch for ch in rel if ch.isprintable())
+    if not rel:
+        raise ValueError("Invalid filename")
+
+    if rel.startswith("/") or rel.startswith("\\"):
+        raise ValueError("Invalid filename")
+
+    head = rel.split("/")[0]
+    if ":" in head:
+        raise ValueError("Invalid filename")
+
+    norm = os.path.normpath(rel).replace("\\", "/")
+    if norm in (".", ""):
+        raise ValueError("Invalid filename")
+
+    parts = [p for p in norm.split("/") if p not in ("", ".")]
+    if any(p == ".." for p in parts):
+        raise ValueError("Invalid filename")
+
+    cleaned = "/".join(parts).strip()
+    low = cleaned.lower()
+    if not low.endswith(_ALLOWED_EXTS):
+        raise ValueError("Only .csv files are allowed")
+
+    if not cleaned:
+        raise ValueError("Invalid filename")
+
+    return cleaned
+
+
 def try_decode_bytes(data: bytes) -> str:
     for enc in ("utf-8-sig", "utf-8", "gb18030", "gbk"):
         try:
@@ -274,7 +306,7 @@ async def vslinx_csv_prompt_read(request: web.Request):
     filename = request.rel_url.query.get("filename", "")
 
     try:
-        filename = sanitize_prompt_filename(filename)
+        filename = sanitize_prompt_relpath(filename)
     except Exception as e:
         return web.json_response({"error": str(e)}, status=400)
 
@@ -292,13 +324,20 @@ async def vslinx_csv_prompt_list(request: web.Request):
     folder = get_promptfiles_dir()
     try:
         files = []
-        for fn in os.listdir(folder):
-            low = fn.lower()
-            if not low.endswith(_ALLOWED_EXTS):
-                continue
-            full = os.path.join(folder, fn)
-            if os.path.isfile(full):
-                files.append(fn)
+        for root, dirs, filenames in os.walk(folder):
+            for fn in filenames:
+                low = fn.lower()
+                if not low.endswith(_ALLOWED_EXTS):
+                    continue
+                full = os.path.join(root, fn)
+                if not os.path.isfile(full):
+                    continue
+                rel = os.path.relpath(full, folder).replace("\\", "/")
+                if rel.startswith("./"):
+                    rel = rel[2:]
+                if rel:
+                    files.append(rel)
+
         files.sort(key=lambda s: s.lower())
         return web.json_response({"files": files})
     except Exception as e:
@@ -416,7 +455,7 @@ class VSLinx_MultiLangPromptPicker:
                     continue
 
                 try:
-                    filename = sanitize_prompt_filename(filename)
+                    filename = sanitize_prompt_relpath(filename)
                     labels, mapping = get_cached_promptfile(filename)
                 except Exception:
                     continue
