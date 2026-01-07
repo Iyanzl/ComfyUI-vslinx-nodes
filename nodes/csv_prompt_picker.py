@@ -170,14 +170,12 @@ def suggest_copy_name(original_filename: str) -> str:
             return candidate
         n += 1
 
-
 def ensure_unique_name(preferred_filename: str) -> str:
     folder = get_promptfiles_dir()
     preferred_path = os.path.join(folder, preferred_filename)
     if not os.path.exists(preferred_path):
         return preferred_filename
     return suggest_copy_name(preferred_filename)
-
 
 @PromptServer.instance.routes.post("/vslinx/csv_prompt_upload")
 async def vslinx_csv_prompt_upload(request: web.Request):
@@ -308,19 +306,6 @@ async def vslinx_csv_prompt_list(request: web.Request):
 
 
 def _normalize_selected_keys(row: Dict[str, Any]) -> List[str]:
-    """
-    Backwards + forwards compatible:
-
-    Old UI:
-      row["key"] = "label"
-
-    New UI multi-select:
-      row["keys"] = ["a","b"]
-      OR (older intermediate builds):
-      row["key"] = ["a","b"]
-
-    Returns a cleaned list of keys (strings), in user-selected order.
-    """
     key = row.get("key", None)
     keys = row.get("keys", None)
 
@@ -359,7 +344,12 @@ class VSLinx_MultiLangPromptPicker:
                 "Add comma at end?": ("BOOLEAN", {"default": True}),
                 "seed": ("INT", {"default": 0, "min": 0, "max": 0xFFFFFFFFFFFFFFFF, "display": "seed"}),
             },
-            "optional": FlexibleOptionalInputType(type=any_type, data={}),
+            "optional": FlexibleOptionalInputType(
+                type=any_type,
+                data={
+                    "pre_text": ("STRING", {"forceInput": True}),
+                },
+            ),
         }
 
     @classmethod
@@ -372,6 +362,13 @@ class VSLinx_MultiLangPromptPicker:
         add_comma_at_end = bool(kwargs.get("Add comma at end?", True))
         seed = int(kwargs.get("seed", 0))
         control_after_generate = kwargs.get("control_after_generate", "fixed")
+
+        pre_text = kwargs.get("pre_text", "")
+        if pre_text is None:
+            pre_text = ""
+        if not isinstance(pre_text, str):
+            pre_text = str(pre_text)
+        pre_text = pre_text.strip()
 
         if control_after_generate == "randomize":
             eff_seed = time.time_ns() & 0xFFFFFFFFFFFFFFFF
@@ -463,7 +460,18 @@ class VSLinx_MultiLangPromptPicker:
                     first_line = first_line[:117] + "..."
                 out_preview.append(f"💬 {first_line}")
 
-        prompt = ", ".join([p for p in final_parts if isinstance(p, str) and p != ""])
+        prompt_body = ", ".join([p for p in final_parts if isinstance(p, str) and p != ""]).strip()
+
+        if pre_text and prompt_body:
+            if pre_text.rstrip().endswith((",", "，")):
+                prompt = pre_text.rstrip() + " " + prompt_body
+            else:
+                prompt = pre_text.rstrip() + ", " + prompt_body
+        elif pre_text:
+            prompt = pre_text
+        else:
+            prompt = prompt_body
+
         if add_comma_at_end and prompt:
             if not prompt.rstrip().endswith(","):
                 prompt += ","
