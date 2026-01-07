@@ -187,6 +187,68 @@ async function listPromptFiles() {
   return Array.isArray(json?.files) ? json.files : [];
 }
 
+const _vslinxCsvContentCache = new Map();
+
+function _vslinxNorm(s) {
+  return String(s ?? "").toLowerCase();
+}
+
+function _vslinxSplitCommaTokens(s) {
+  return String(s ?? "")
+    .split(",")
+    .map((t) => t.trim())
+    .filter(Boolean);
+}
+
+async function _vslinxGetFileDataCached(filename) {
+  if (_vslinxCsvContentCache.has(filename)) return _vslinxCsvContentCache.get(filename);
+  const data = await readPromptFile(filename);
+  const norm = {
+    labels: Array.isArray(data?.labels) ? data.labels.map(String) : [],
+    map: (data?.map && typeof data.map === "object") ? data.map : {},
+  };
+  _vslinxCsvContentCache.set(filename, norm);
+  return norm;
+}
+
+async function _vslinxFindHitsInFile(filename, needleRaw) {
+  const needle = _vslinxNorm(needleRaw).trim();
+  if (!needle) return [];
+
+  const data = await _vslinxGetFileDataCached(filename);
+
+  const hits = [];
+  const seen = new Set();
+
+  for (const lab of (data.labels || [])) {
+    const t = String(lab ?? "").trim();
+    if (!t || t === "(None)" || t === "Random") continue;
+    if (_vslinxNorm(t).includes(needle)) {
+      const key = _vslinxNorm(t);
+      if (!seen.has(key)) {
+        seen.add(key);
+        hits.push(t);
+      }
+    }
+  }
+
+  try {
+    for (const [, v] of Object.entries(data.map || {})) {
+      for (const tok of _vslinxSplitCommaTokens(v)) {
+        if (_vslinxNorm(tok).includes(needle)) {
+          const key = _vslinxNorm(tok);
+          if (!seen.has(key)) {
+            seen.add(key);
+            hits.push(tok);
+          }
+        }
+      }
+    }
+  } catch (_) { }
+
+  return hits;
+}
+
 function showAdditionalPromptModal(currentText = "") {
   return new Promise((resolve) => {
     const overlay = document.createElement("div");
@@ -448,15 +510,59 @@ function showFilePickerModal(files, current = "") {
     title.style.fontSize = "15px";
     title.style.fontWeight = "600";
 
+    const searchRow = document.createElement("div");
+    searchRow.style.display = "flex";
+    searchRow.style.gap = "10px";
+    searchRow.style.alignItems = "stretch";
+
     const search = document.createElement("input");
     search.type = "text";
     search.placeholder = "Search...";
+    search.style.flex = "1 1 auto";
+    search.style.height = "40px";
     search.style.padding = "10px";
     search.style.borderRadius = "10px";
     search.style.border = "1px solid #555";
     search.style.background = "#2b2b2b";
     search.style.color = "#eee";
     search.style.outline = "none";
+
+    const inContentsBtn = document.createElement("button");
+    inContentsBtn.type = "button";
+    inContentsBtn.textContent = "In Contents?";
+    inContentsBtn.title = "Search inside CSV contents (both columns)";
+    inContentsBtn.style.flex = "0 0 auto";
+    inContentsBtn.style.width = "120px";
+    inContentsBtn.style.height = "40px";
+    inContentsBtn.style.borderRadius = "10px";
+    inContentsBtn.style.border = "1px solid #555";
+    inContentsBtn.style.background = "#2b2b2b";
+    inContentsBtn.style.color = "#eee";
+    inContentsBtn.style.cursor = "pointer";
+    inContentsBtn.style.userSelect = "none";
+    inContentsBtn.style.whiteSpace = "nowrap";
+    inContentsBtn.style.padding = "0 12px";
+    inContentsBtn.style.fontSize = "12px";
+
+    inContentsBtn._active = false;
+
+    function setInContentsVisual() {
+      if (inContentsBtn._active) {
+        inContentsBtn.style.border = "1px solid #2d7a40";
+        inContentsBtn.style.boxShadow = "0 0 0 1px rgba(45,122,64,0.35)";
+        inContentsBtn.style.background = "#1f3a25";
+      } else {
+        inContentsBtn.style.border = "1px solid #555";
+        inContentsBtn.style.boxShadow = "none";
+        inContentsBtn.style.background = "#2b2b2b";
+      }
+    }
+
+    setInContentsVisual();
+
+    searchRow.appendChild(search);
+    searchRow.appendChild(inContentsBtn);
+
 
     const list = document.createElement("div");
     list.style.flex = "1";
@@ -488,58 +594,143 @@ function showFilePickerModal(files, current = "") {
       if (e.target === overlay) cancel.onclick();
     };
 
-    function render(filterText) {
+    let renderSeq = 0;
+
+    function renderFilenameRow(fn, { hits = null } = {}) {
+      const row = document.createElement("div");
+      row.style.display = "flex";
+      row.style.alignItems = "center";
+      row.style.gap = "8px";
+      row.style.padding = "10px 12px";
+      row.style.cursor = "pointer";
+      row.style.borderBottom = "1px solid #222";
+      row.style.whiteSpace = "nowrap";
+      row.style.overflow = "hidden";
+
+      const nameSpan = document.createElement("span");
+      nameSpan.textContent = fn;
+      nameSpan.style.flex = hits ? "0 0 auto" : "1 1 auto";
+      nameSpan.style.overflow = "hidden";
+      nameSpan.style.textOverflow = "ellipsis";
+
+      row.appendChild(nameSpan);
+
+      if (Array.isArray(hits) && hits.length) {
+        const hitsSpan = document.createElement("span");
+        hitsSpan.textContent = `(${hits.join(", ")})`;
+        hitsSpan.style.opacity = "0.55";
+        hitsSpan.style.fontSize = "12px";
+        hitsSpan.style.flex = "1 1 auto";
+        hitsSpan.style.overflow = "hidden";
+        hitsSpan.style.textOverflow = "ellipsis";
+        hitsSpan.style.minWidth = "0";
+        row.appendChild(hitsSpan);
+      }
+
+      if (fn === current) {
+        row.style.background = "#2a2a2a";
+        row.style.fontWeight = "600";
+      }
+
+      row.onmouseenter = () => (row.style.background = fn === current ? "#2f2f2f" : "#232323");
+      row.onmouseleave = () => (row.style.background = fn === current ? "#2a2a2a" : "transparent");
+
+      row.onclick = () => {
+        document.body.removeChild(overlay);
+        resolve(fn);
+      };
+
+      list.appendChild(row);
+    }
+
+    function renderEmpty(text) {
       list.innerHTML = "";
-      const f = (filterText || "").trim().toLowerCase();
-      const shown = files.filter((fn) => !f || fn.toLowerCase().includes(f));
-      if (!shown.length) {
-        const empty = document.createElement("div");
-        empty.textContent = "No matching files.";
-        empty.style.padding = "10px";
-        empty.style.opacity = "0.8";
-        list.appendChild(empty);
+      const empty = document.createElement("div");
+      empty.textContent = text;
+      empty.style.padding = "10px";
+      empty.style.opacity = "0.8";
+      list.appendChild(empty);
+    }
+
+    async function render(filterText, inContentsMode) {
+      const mySeq = ++renderSeq;
+
+      const qRaw = (filterText || "").trim();
+      const q = qRaw.toLowerCase();
+
+      if (!inContentsMode) {
+        list.innerHTML = "";
+        const shown = files.filter((fn) => !q || fn.toLowerCase().includes(q));
+        if (!shown.length) {
+          renderEmpty("No matching files.");
+          return;
+        }
+        for (const fn of shown) renderFilenameRow(fn);
         return;
       }
 
-      for (const fn of shown) {
-        const row = document.createElement("div");
-        row.textContent = fn;
-        row.style.padding = "10px 12px";
-        row.style.cursor = "pointer";
-        row.style.borderBottom = "1px solid #222";
-        row.style.whiteSpace = "nowrap";
-        row.style.overflow = "hidden";
-        row.style.textOverflow = "ellipsis";
+      if (!qRaw) {
+        list.innerHTML = "";
+        for (const fn of files) renderFilenameRow(fn);
+        return;
+      }
 
-        if (fn === current) {
-          row.style.background = "#2a2a2a";
-          row.style.fontWeight = "600";
+      renderEmpty("Searching contents...");
+
+      const results = [];
+      for (const fn of files) {
+        if (mySeq !== renderSeq) return;
+
+        let hits = [];
+        try {
+          hits = await _vslinxFindHitsInFile(fn, qRaw);
+        } catch (_) {
+          hits = [];
         }
 
-        row.onmouseenter = () => (row.style.background = fn === current ? "#2f2f2f" : "#232323");
-        row.onmouseleave = () => (row.style.background = fn === current ? "#2a2a2a" : "transparent");
-
-        row.onclick = () => {
-          document.body.removeChild(overlay);
-          resolve(fn);
-        };
-
-        list.appendChild(row);
+        if (hits.length) results.push({ fn, hits });
       }
+
+      if (mySeq !== renderSeq) return;
+
+      list.innerHTML = "";
+      if (!results.length) {
+        renderEmpty("No matching files.");
+        return;
+      }
+
+      for (const r of results) renderFilenameRow(r.fn, { hits: r.hits });
     }
 
-    search.oninput = () => render(search.value);
+    let debounceT = null;
+    function scheduleRender() {
+      if (debounceT) clearTimeout(debounceT);
+      const delay = inContentsBtn._active ? 180 : 0;
+      debounceT = setTimeout(() => {
+        render(search.value, inContentsBtn._active);
+      }, delay);
+    }
+
+    search.oninput = scheduleRender;
+
+    inContentsBtn.onclick = (e) => {
+      e.preventDefault?.();
+      e.stopPropagation?.();
+      inContentsBtn._active = !inContentsBtn._active;
+      setInContentsVisual();
+      scheduleRender();
+    };
 
     footer.appendChild(cancel);
 
     card.appendChild(title);
-    card.appendChild(search);
+    card.appendChild(searchRow);
     card.appendChild(list);
     card.appendChild(footer);
     overlay.appendChild(card);
     document.body.appendChild(overlay);
 
-    render("");
+    render("", false);
     setTimeout(() => search.focus(), 0);
   });
 }
