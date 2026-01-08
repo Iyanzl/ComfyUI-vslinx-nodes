@@ -920,6 +920,170 @@ function showFilePickerModal(files, current = "") {
   });
 }
 
+// *** 新增功能：全局搜索与预览模态框 ***
+function showActiveRowsSearchModal(rows) {
+  return new Promise((resolve) => {
+    // 1. 创建遮罩层和卡片
+    const overlay = document.createElement("div");
+    overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:999999;display:flex;align-items:center;justify-content:center;";
+    const card = document.createElement("div");
+    card.style.cssText = "width:680px;max-width:94vw;max-height:84vh;background:#1f1f1f;border:1px solid #444;border-radius:12px;padding:14px;color:#eee;font-family:sans-serif;box-shadow:0 10px 30px rgba(0,0,0,0.35);display:flex;flex-direction:column;gap:10px;";
+
+    // 2. 标题与搜索框
+    const title = document.createElement("div"); title.textContent = "Search in Added Files"; title.style.fontWeight = "600";
+    const search = document.createElement("input");
+    search.type = "text"; search.placeholder = "Type to search content...";
+    search.style.cssText = "padding:10px;border-radius:10px;border:1px solid #555;background:#2b2b2b;color:#eee;outline:none;";
+
+    // 3. 结果列表容器
+    const list = document.createElement("div");
+    list.style.cssText = "flex:1;overflow-y:auto;border:1px solid #333;border-radius:10px;background:#181818;min-height:200px;";
+
+    // 4. 底部按钮
+    const footer = document.createElement("div"); footer.style.cssText = "display:flex;justify-content:flex-end;gap:8px;";
+    const cancelBtn = document.createElement("button"); cancelBtn.textContent = "Cancel"; 
+    cancelBtn.style.cssText = "padding:8px 14px;border-radius:10px;border:1px solid #555;background:#2b2b2b;color:#eee;cursor:pointer;";
+    const applyBtn = document.createElement("button"); applyBtn.textContent = "Apply Changes"; 
+    applyBtn.style.cssText = "padding:8px 14px;border-radius:10px;border:1px solid #2d7a40;background:#1f3a25;color:#eee;cursor:pointer;font-weight:600;";
+
+    // 5. 初始化选中状态 (Map<文件名, Set<Key>>)
+    const pendingSelections = new Map();
+    for (const r of rows) {
+      if (!r.value.file) continue;
+      const keys = new Set();
+      // 使用现有的获取 Key 逻辑
+      const existing = r._getKeysEffective ? r._getKeysEffective() : [];
+      existing.forEach(k => keys.add(k));
+      if (keys.size > 0) pendingSelections.set(r.value.file, keys);
+    }
+
+    // 切换选中状态的函数
+    function toggleSelection(file, key) {
+      if (!pendingSelections.has(file)) pendingSelections.set(file, new Set());
+      const set = pendingSelections.get(file);
+      
+      // Logic: If selecting "Random", clear others. If selecting normal key and "Random" exists, clear "Random".
+      if (set.has(key)) {
+        set.delete(key);
+      } else {
+        if (key === "Random") {
+           set.clear();
+        } else {
+           if (set.has("Random")) set.delete("Random");
+           if (set.has("(None)")) set.delete("(None)");
+        }
+        set.add(key);
+      }
+      renderResults(search.value); // 重新渲染以更新勾选状态
+    }
+
+    // 渲染列表项的辅助函数
+    async function renderItems(itemsByFile) {
+        list.innerHTML = "";
+        if (itemsByFile.length === 0) {
+            list.innerHTML = '<div style="padding:20px;text-align:center;opacity:0.5;color:#aaa;">No items found.</div>';
+            return;
+        }
+
+        for (const group of itemsByFile) {
+            // 文件名标题
+            const header = document.createElement("div");
+            header.textContent = group.fn; 
+            header.style.cssText = "padding:8px 12px;background:#252525;border-bottom:1px solid #333;font-weight:600;font-size:13px;color:#ccc;";
+            list.appendChild(header);
+
+            // 获取该文件的对应关系用于显示副标题(Value)
+            const cachedData = await _vslinxGetFileDataCached(group.fn);
+            const map = cachedData.map || {};
+
+            for (const key of group.keys) {
+                const rowEl = document.createElement("div");
+                rowEl.style.cssText = "display:flex;align-items:center;padding:8px 12px 8px 24px;border-bottom:1px solid #222;cursor:pointer;";
+                
+                const isSelected = pendingSelections.has(group.fn) && pendingSelections.get(group.fn).has(key);
+                
+                // 复选框样式
+                const check = document.createElement("div");
+                check.textContent = isSelected ? "✓" : "";
+                check.style.cssText = `width:18px;height:18px;border:${isSelected ? "1px solid #4caf50" : "1px solid #555"};border-radius:4px;margin-right:10px;background:${isSelected ? "#4caf50" : "transparent"};display:flex;align-items:center;justify-content:center;font-size:12px;color:#fff;`;
+                
+                // 内容区域
+                const contentDiv = document.createElement("div");
+                contentDiv.style.cssText = "overflow:hidden;flex:1;";
+                contentDiv.innerHTML = `<div style="color:#ddd;font-size:13px;">${key}</div><div style="color:#888;font-size:11px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${map[key] || ""}</div>`;
+                
+                rowEl.append(check, contentDiv);
+                
+                rowEl.onclick = (e) => { 
+                    e.preventDefault(); e.stopPropagation();
+                    toggleSelection(group.fn, key); 
+                };
+                rowEl.onmouseenter = () => rowEl.style.background = "#2a2a2a";
+                rowEl.onmouseleave = () => rowEl.style.background = "transparent";
+                list.appendChild(rowEl);
+            }
+        }
+    }
+
+    let searchSeq = 0;
+    async function renderResults(queryRaw) {
+      const seq = ++searchSeq;
+      const q = (queryRaw || "").trim().toLowerCase();
+      
+      // *** 核心逻辑：如果没有输入搜索词，显示“已选内容” ***
+      if (!q) {
+        const selectedGroups = [];
+        for (const [fn, keys] of pendingSelections.entries()) {
+            if (keys.size > 0) {
+                selectedGroups.push({ fn, keys: Array.from(keys) });
+            }
+        }
+        selectedGroups.sort((a,b) => a.fn.localeCompare(b.fn)); // 按文件名排序
+        
+        if (seq !== searchSeq) return;
+
+        if (selectedGroups.length === 0) {
+            list.innerHTML = '<div style="padding:20px;text-align:center;opacity:0.5;color:#aaa;">No items currently selected.<br>Type to search content...</div>';
+        } else {
+            // 添加一个提示头
+            const viewHeader = document.createElement("div");
+            viewHeader.textContent = "Currently Selected Items (Clear search to view):";
+            viewHeader.style.cssText = "padding:10px;color:#888;font-size:12px;font-style:italic;background:#1a1a1a;";
+            list.innerHTML = "";
+            list.appendChild(viewHeader);
+            await renderItems(selectedGroups);
+            list.prepend(viewHeader); 
+        }
+        return;
+      }
+      
+      // *** 搜索逻辑 ***
+      list.innerHTML = '<div style="padding:20px;text-align:center;opacity:0.5;color:#aaa;">Searching...</div>';
+      // 获取所有行对应的去重文件名
+      const uniqueFiles = [...new Set(rows.map(r => r.value.file).filter(Boolean))];
+      const results = [];
+      for (const fn of uniqueFiles) {
+        if (seq !== searchSeq) return;
+        try {
+          // 调用原有的搜索函数
+          const hits = await _vslinxFindHitsInFile(fn, q);
+          if (hits.length) results.push({ fn, keys: hits });
+        } catch (_) {}
+      }
+      if (seq !== searchSeq) return;
+      await renderItems(results);
+    }
+
+    let debounceT;
+    search.oninput = () => { clearTimeout(debounceT); debounceT = setTimeout(() => renderResults(search.value), 300); };
+    cancelBtn.onclick = () => { document.body.removeChild(overlay); resolve(null); };
+    applyBtn.onclick = () => { document.body.removeChild(overlay); resolve(pendingSelections); };
+
+    card.append(title, search, list, footer); footer.append(cancelBtn, applyBtn); overlay.append(card); document.body.append(overlay);
+    search.focus(); renderResults(""); // 初始渲染
+  });
+}
+
 function showKeyPickerMenu(items, event, titleText = "Selection", opts = {}) {
   return new Promise((resolve) => {
     const ev = event?.originalEvent || event?.detail?.event || event;
@@ -1322,6 +1486,8 @@ const LIST_TOP_SPACER_ID = "vslinx_list_top_spacer";
 const BUTTON_SPACER_ID = "vslinx_select_csv_spacer";
 const BUTTON_ID = "vslinx_select_csv_button";
 const BUTTON_LABEL = "Select CSV File";
+const GLOBAL_SEARCH_BUTTON_ID = "vslinx_global_search_button";
+const GLOBAL_SEARCH_BUTTON_LABEL = "🔍 Search in Added Files";
 
 const EXTRA_PROMPT_ID = "vslinx_extra_prompt_row";
 const EXTRA_PROMPT_NAME = "csv_additional_prompt";
@@ -1393,6 +1559,7 @@ function layoutWidgets(node) {
   const rows = widgets.filter(isRowWidget);
   const topSpacer = widgets.find(isListTopSpacer) || null;
   const btnSpacer = widgets.find(isButtonSpacer) || null;
+  const searchBtn = widgets.find(isGlobalSearchButton); 
   const btn = widgets.find(isBottomButton) || null;
 
   const rest = widgets.filter((w) => {
@@ -1400,17 +1567,20 @@ function layoutWidgets(node) {
     if (w === topSpacer) return false;
     if (w === btnSpacer) return false;
     if (w === btn) return false;
+    if (w === searchBtn) return false; // Fix: Prevent duplication
     if (isListTopSpacer(w)) return false;
     if (isButtonSpacer(w)) return false;
     if (isBottomButton(w)) return false;
+    if (isGlobalSearchButton(w)) return false; // Fix: Prevent duplication
     return true;
   });
 
-  const next = [...rest];
-  if (topSpacer) next.push(topSpacer);
-  next.push(...rows);
-  if (btnSpacer) next.push(btnSpacer);
-  if (btn) next.push(btn);
+  const next = [...rest]; // ExtraPrompt (and others) go here
+  if (searchBtn) next.push(searchBtn); // Fix: Place Search button below ExtraPrompt
+  if (topSpacer) next.push(topSpacer); // Then the spacer
+  next.push(...rows); // Then the CSV rows
+  if (btnSpacer) next.push(btnSpacer); // Then bottom spacer
+  if (btn) next.push(btn); // Fix: Select CSV button stays at the very bottom
 
   node.widgets = next;
   updateRowOrders(node);
@@ -1423,12 +1593,54 @@ function removeAllVslinxUiWidgets(node) {
     if (isButtonSpacer(w)) return false;
     if (isBottomButton(w)) return false;
     if (isExtraPromptRow(w)) return false;
+	if (isGlobalSearchButton(w)) return false; 
     if (w?._vslinx_id === LIST_TOP_SPACER_ID) return false;
     if (w?._vslinx_id === BUTTON_SPACER_ID) return false;
     if (w?._vslinx_id === BUTTON_ID) return false;
     if (w?._vslinx_id === EXTRA_PROMPT_ID) return false;
     return true;
   });
+}
+
+function isGlobalSearchButton(w) { return w?._vslinx_id === GLOBAL_SEARCH_BUTTON_ID; }
+
+function ensureGlobalSearchButton(node) {
+  const existing = (node.widgets || []).find(isGlobalSearchButton);
+  if (existing) return existing;
+  
+  const btn = node.addWidget("button", GLOBAL_SEARCH_BUTTON_LABEL, null, async () => {
+    // 1. 获取所有 CSV 行
+    const rows = getRowWidgets(node).filter(w => w.value.type === "CsvRowWidget");
+    if (!rows.length) { toast("warn", "No CSVs", "Add CSV files first."); return; }
+    
+    // 2. 打开模态框
+    const map = await showActiveRowsSearchModal(rows);
+    if (!map) return; // 用户点击了取消
+    
+    // 3. 应用更改
+    let changed = false;
+    for (const r of rows) {
+      if (map.has(r.value.file)) {
+        const keys = Array.from(map.get(r.value.file));
+        
+        // 比较逻辑：如果不一致才更新，避免无效刷新
+        // 简单处理：直接根据返回的 keys 设置单选/多选状态
+        if (keys.length === 0) {
+           if(r.value.key !== "(None)") { r.value.key = "(None)"; r.value.keys = []; changed = true; }
+        } else if (keys.length === 1) {
+           if(r.value.key !== keys[0]) { r.value.key = keys[0]; r.value.keys = []; changed = true; }
+        } else {
+           // 多选情况，总是更新以确保顺序或内容一致
+           r.value.key = keys[0]; r.value.keys = keys; changed = true;
+        }
+      }
+    }
+    if (changed) node.setDirtyCanvas(true, true);
+  });
+  
+  btn.serialize = false;
+  btn._vslinx_id = GLOBAL_SEARCH_BUTTON_ID;
+  return btn;
 }
 
 function ensureSelectButton(node) {
@@ -2412,6 +2624,7 @@ app.registerExtension({
 
       ensureListTopSpacer(node, 10);
       ensureButtonSpacer(node, 10);
+	  ensureGlobalSearchButton(node); 
       ensureSelectButton(node);
 
       const vals = info?.widgets_values || [];
@@ -2469,6 +2682,7 @@ app.registerExtension({
     removeAllVslinxUiWidgets(node);
     ensureListTopSpacer(node, 10);
     ensureButtonSpacer(node, 10);
+	ensureGlobalSearchButton(node);
     ensureSelectButton(node);
 
     ensureExtraPromptRow(node);
@@ -2478,4 +2692,4 @@ app.registerExtension({
     layoutWidgets(node);
     recomputeNodeSize(node);
   },
-});
+}); 

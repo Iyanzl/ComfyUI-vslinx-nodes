@@ -398,16 +398,14 @@ class VSLinx_MultiLangPromptPicker:
         return None
 
     def run(self, **kwargs):
-        add_comma_at_end = bool(kwargs.get("Add comma at end?", True))
+        add_comma_global = bool(kwargs.get("Add comma at end?", True))
         seed = int(kwargs.get("seed", 0))
         control_after_generate = kwargs.get("control_after_generate", "fixed")
 
         pre_text = kwargs.get("pre_text", "")
         if pre_text is None:
             pre_text = ""
-        if not isinstance(pre_text, str):
-            pre_text = str(pre_text)
-        pre_text = pre_text.strip()
+        pre_text = str(pre_text).strip()
 
         if control_after_generate == "randomize":
             eff_seed = time.time_ns() & 0xFFFFFFFFFFFFFFFF
@@ -480,40 +478,43 @@ class VSLinx_MultiLangPromptPicker:
                         sel_preview.append(f"🔀 {key}" if original_key == "Random" else f"🧾 {key}")
                         out_preview.append(f"💬 {out}")
 
-                continue
-
-            if vtype == "ExtraPromptWidget":
+            elif vtype == "ExtraPromptWidget":
                 text = v.get("text", "")
                 if not isinstance(text, str):
                     text = str(text)
-
                 text = text.strip()
-                if not text:
-                    continue
+                if text:
+                    final_parts.append(text)
+                    sel_preview.append("📝 Additional prompt")
+                    first_line = text.splitlines()[0].strip() if text.splitlines() else text
+                    if len(first_line) > 120:
+                        first_line = first_line[:117] + "..."
+                    out_preview.append(f"💬 {first_line}")
 
-                final_parts.append(text)
+        #  拼接逻辑 (核心修改)
+        # 根据开关决定分隔符
+        separator = ", " if add_comma_global else " "
+        prompt_body = separator.join([p for p in final_parts if isinstance(p, str) and p != ""]).strip()
 
-                sel_preview.append("📝 Additional prompt")
-                first_line = text.splitlines()[0].strip() if text.splitlines() else text
-                if len(first_line) > 120:
-                    first_line = first_line[:117] + "..."
-                out_preview.append(f"💬 {first_line}")
-
-        prompt_body = ", ".join([p for p in final_parts if isinstance(p, str) and p != ""]).strip()
-
+        # 处理前置文本连接
         if pre_text and prompt_body:
-            if pre_text.rstrip().endswith((",", "，")):
+            # 无论是否勾选逗号，节点之间的连接只使用空格
+            # 除非前置文本自带标点，否则就是 "Color Eye" 这种格式
+            if pre_text.rstrip().endswith((",", "，", ".")):
                 prompt = pre_text.rstrip() + " " + prompt_body
             else:
-                prompt = pre_text.rstrip() + ", " + prompt_body
+                prompt = pre_text.rstrip() + " " + prompt_body
         elif pre_text:
             prompt = pre_text
         else:
             prompt = prompt_body
 
-        if add_comma_at_end and prompt:
-            if not prompt.rstrip().endswith(","):
-                prompt += ","
+        # 3. 处理末尾逗号
+        # 只有在勾选了选项，且末尾没有逗号时，才追加逗号
+        if add_comma_global and prompt:
+            clean_prompt = prompt.rstrip()
+            if not clean_prompt.endswith(",") and not clean_prompt.endswith("，"):
+                prompt = clean_prompt + ","
 
         return (
             prompt,
