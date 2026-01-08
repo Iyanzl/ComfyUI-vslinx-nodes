@@ -380,7 +380,7 @@ class VSLinx_MultiLangPromptPicker:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "Add comma at end?": ("BOOLEAN", {"default": True}),
+                "Add comma?": ("BOOLEAN", {"default": True}),
                 "seed": ("INT", {"default": 0, "min": 0, "max": 0xFFFFFFFFFFFFFFFF, "display": "seed"}),
             },
             "optional": FlexibleOptionalInputType(
@@ -398,7 +398,7 @@ class VSLinx_MultiLangPromptPicker:
         return None
 
     def run(self, **kwargs):
-        add_comma_global = bool(kwargs.get("Add comma at end?", True))
+        add_comma_global = bool(kwargs.get("Add comma?", True))
         seed = int(kwargs.get("seed", 0))
         control_after_generate = kwargs.get("control_after_generate", "fixed")
 
@@ -529,4 +529,5 @@ NODE_CLASS_MAPPINGS = {
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "vsLinx_MultiLangPromptPicker": "Multi-Language CSV Prompt Picker",
+
 }
