@@ -1605,42 +1605,14 @@ function removeAllVslinxUiWidgets(node) {
 function isGlobalSearchButton(w) { return w?._vslinx_id === GLOBAL_SEARCH_BUTTON_ID; }
 
 function ensureGlobalSearchButton(node) {
-  const existing = (node.widgets || []).find(isGlobalSearchButton);
+  // 检查是否已经存在 (ID 复用)
+  const existing = (node.widgets || []).find(w => w?._vslinx_id === GLOBAL_SEARCH_BUTTON_ID);
   if (existing) return existing;
   
-  const btn = node.addWidget("button", GLOBAL_SEARCH_BUTTON_LABEL, null, async () => {
-    // 1. 获取所有 CSV 行
-    const rows = getRowWidgets(node).filter(w => w.value.type === "CsvRowWidget");
-    if (!rows.length) { toast("warn", "No CSVs", "Add CSV files first."); return; }
-    
-    // 2. 打开模态框
-    const map = await showActiveRowsSearchModal(rows);
-    if (!map) return; // 用户点击了取消
-    
-    // 3. 应用更改
-    let changed = false;
-    for (const r of rows) {
-      if (map.has(r.value.file)) {
-        const keys = Array.from(map.get(r.value.file));
-        
-        // 比较逻辑：如果不一致才更新，避免无效刷新
-        // 简单处理：直接根据返回的 keys 设置单选/多选状态
-        if (keys.length === 0) {
-           if(r.value.key !== "(None)") { r.value.key = "(None)"; r.value.keys = []; changed = true; }
-        } else if (keys.length === 1) {
-           if(r.value.key !== keys[0]) { r.value.key = keys[0]; r.value.keys = []; changed = true; }
-        } else {
-           // 多选情况，总是更新以确保顺序或内容一致
-           r.value.key = keys[0]; r.value.keys = keys; changed = true;
-        }
-      }
-    }
-    if (changed) node.setDirtyCanvas(true, true);
-  });
-  
-  btn.serialize = false;
-  btn._vslinx_id = GLOBAL_SEARCH_BUTTON_ID;
-  return btn;
+  // 创建组合控件
+  const w = new SearchAndAddWidget();
+  node.addCustomWidget(w);
+  return w;
 }
 
 function ensureSelectButton(node) {
@@ -1833,6 +1805,163 @@ function endDrag(node, commit = true) {
   node.setDirtyCanvas(true, true);
 }
 
+class SearchAndAddWidget {
+  constructor() {
+    this.name = "SearchAndAdd";
+    this.type = "custom";
+    this.value = { type: "SearchAndAddWidget" };
+    this.serialize = false; 
+    // 复用原有的 ID 常量，确保布局函数能正确识别位置
+    this._vslinx_id = GLOBAL_SEARCH_BUTTON_ID; 
+    this._hover = null;
+    this._bounds = { search: [0, 0, 0, 0], add: [0, 0, 0, 0] };
+  }
+
+  computeSize() { return [0, 32]; } // 设置稍高一点，方便点击
+
+  _hitPart(pos) {
+    const x = pos[0];
+    const y = pos[1];
+    const inRect = (r) => x >= r[0] && x <= r[0] + r[2] && y >= r[1] && y <= r[1] + r[3];
+    if (inRect(this._bounds.add)) return "add";
+    if (inRect(this._bounds.search)) return "search";
+    return null;
+  }
+
+  draw(ctx, node, width, y) {
+    const margin = 10; // LIST_SIDE_MARGIN
+    const h = 32; 
+    const w = Math.max(0, width - margin * 2);
+    const x = margin;
+    
+    // 布局：[ 搜索按钮 (自适应) ] [ 间隔 ] [ + 按钮 (固定方形) ]
+    const btnSize = h; 
+    const gap = 8;
+    const searchW = Math.max(0, w - btnSize - gap);
+    const addX = x + searchW + gap;
+    
+    // --- 绘制左侧搜索按钮 ---
+    ctx.save();
+    const isSearchHover = this._hover === "search";
+    // 按钮背景
+    ctx.fillStyle = isSearchHover ? "#3a3a3a" : "#2b2b2b"; 
+    roundRectPath(ctx, x, y, searchW, h, 6);
+    ctx.fill();
+    ctx.strokeStyle = "#555";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    
+    // 按钮文字
+    ctx.fillStyle = "#eee";
+    ctx.font = "13px sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(GLOBAL_SEARCH_BUTTON_LABEL, x + searchW / 2, y + h / 2);
+    ctx.restore();
+
+    // --- 绘制右侧添加 (+) 按钮 ---
+    ctx.save();
+    const isAddHover = this._hover === "add";
+    ctx.fillStyle = isAddHover ? "#358f4f" : "#2d7a40"; // 绿色
+    roundRectPath(ctx, addX, y, btnSize, h, 6);
+    ctx.fill();
+    ctx.strokeStyle = isAddHover ? "#4caf50" : "#1f3a25";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    // + 图标
+    ctx.fillStyle = "#fff";
+    ctx.font = "bold 18px sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    // 微调 + 号位置
+    ctx.fillText("+", addX + btnSize / 2, y + h / 2 + 1);
+    ctx.restore();
+
+    this._bounds.search = [x, y, searchW, h];
+    this._bounds.add = [addX, y, btnSize, h];
+  }
+
+  mouse(event, pos, node) {
+    const t = event?.type || "";
+    const isDown = (t === "pointerdown" || t === "mousedown");
+    const isMove = (t === "pointermove" || t === "mousemove");
+    const isLeave = (t === "pointerleave" || t === "mouseleave");
+
+    // 处理悬停效果
+    if (isMove) {
+        const part = this._hitPart(pos);
+        if (this._hover !== part) {
+            this._hover = part;
+            node.setDirtyCanvas(true, false); 
+        }
+        return true;
+    }
+    
+    if (isLeave) {
+        if (this._hover) {
+            this._hover = null;
+            node.setDirtyCanvas(true, false);
+        }
+    }
+
+    if (isDown) {
+        const part = this._hitPart(pos);
+        
+        // --- 逻辑：点击搜索 ---
+        if (part === "search") {
+            (async () => {
+                const rows = getRowWidgets(node).filter(w => w.value.type === "CsvRowWidget");
+                if (!rows.length) { toast("warn", "No CSVs", "Add CSV files first."); return; }
+                const map = await showActiveRowsSearchModal(rows);
+                if (!map) return;
+                let changed = false;
+                for (const r of rows) {
+                  if (map.has(r.value.file)) {
+                    const keys = Array.from(map.get(r.value.file));
+                    if (keys.length === 0) {
+                       if(r.value.key !== "(None)") { r.value.key = "(None)"; r.value.keys = []; changed = true; }
+                    } else if (keys.length === 1) {
+                       if(r.value.key !== keys[0]) { r.value.key = keys[0]; r.value.keys = []; changed = true; }
+                    } else {
+                       r.value.key = keys[0]; r.value.keys = keys; changed = true;
+                    }
+                  }
+                }
+                if (changed) node.setDirtyCanvas(true, true);
+            })();
+            return true;
+        }
+        
+        // --- 逻辑：点击添加 (+) ---
+        if (part === "add") {
+            // 计算唯一名称索引
+            let maxIdx = 0;
+            const allExtras = (node.widgets || []).filter(w => w?.value?.type === "ExtraPromptWidget");
+            allExtras.forEach(w => {
+                 if (w.name.startsWith(EXTRA_PROMPT_NAME)) {
+                     const suffix = w.name.replace(EXTRA_PROMPT_NAME, "").replace("_", "");
+                     const idx = parseInt(suffix);
+                     if (!isNaN(idx) && idx > maxIdx) maxIdx = idx;
+                 }
+            });
+            const nextIdx = maxIdx + 1;
+            const nextName = `${EXTRA_PROMPT_NAME}_${nextIdx}`;
+            
+            const w = new ExtraPromptWidget(nextName);
+            w._vslinx_id = `${EXTRA_PROMPT_ID}_${nextIdx}`;
+            
+            node.addCustomWidget(w);
+            layoutWidgets(node);
+            recomputeNodeSize(node);
+            node.setDirtyCanvas(true, true);
+            return true;
+        }
+    }
+    return false;
+  }
+}
+
 class ExtraPromptWidget {
   constructor(name) {
     this.name = name;
@@ -1844,6 +1973,7 @@ class ExtraPromptWidget {
     this._bounds = {
       drag: [0, 0, 0, 0],
       edit: [0, 0, 0, 0],
+      sub: [0, 0, 0, 0],
     };
   }
 
@@ -1854,6 +1984,7 @@ class ExtraPromptWidget {
     const x = pos[0];
     const y = pos[1];
     const inRect = (r) => x >= r[0] && x <= r[0] + r[2] && y >= r[1] && y <= r[1] + r[3];
+    if (inRect(this._bounds.sub)) return "sub";
     if (inRect(this._bounds.drag)) return "drag";
     if (inRect(this._bounds.edit)) return "edit";
     return null;
@@ -1879,8 +2010,20 @@ class ExtraPromptWidget {
     const tableX = x + handleW + gap;
     const tableW = Math.max(0, w - handleW - gap);
 
+    // 按钮布局参数
+    const btnSize = 22; 
+    const btnY = yy + (hh - btnSize) / 2;
+    
+    // 删除按钮 (X) 位于最右侧
+    const btnSubX = tableX + tableW - btnSize - 6; 
+    
+    // 文本区域最大宽度（避开删除按钮）
+    const textAreaRightBoundary = btnSubX - 10; 
+    const maxTextW = Math.max(0, textAreaRightBoundary - tableX - 10); 
+
     ctx.save();
 
+    // 1. 绘制拖拽手柄
     ctx.globalAlpha = 0.92;
     ctx.fillStyle = "#232323";
     roundRectPath(ctx, handleX, handleY, handleW, hh, 7);
@@ -1895,6 +2038,7 @@ class ExtraPromptWidget {
     if (this._hover === "drag" || this._dragging) drawHoverOverlay(ctx, handleX, handleY, handleW, hh, false);
     drawGripDots(ctx, handleX, handleY, handleW, hh, this._dragging);
 
+    // 2. 绘制主内容背景 (输入框背景)
     ctx.globalAlpha = 0.92;
     ctx.fillStyle = "#262626";
     roundRectPath(ctx, tableX, yy, tableW, hh, 7);
@@ -1906,8 +2050,25 @@ class ExtraPromptWidget {
     roundRectPath(ctx, tableX, yy, tableW, hh, 7);
     ctx.stroke();
 
-    if (this._hover === "edit") drawHoverOverlay(ctx, tableX, yy, tableW, hh, false);
+    // 文本区域 Hover 效果
+    if (this._hover === "edit") {
+        // 稍微缩小一点 hover 区域，避免覆盖到 X 按钮的视觉范围
+        drawHoverOverlay(ctx, tableX, yy, textAreaRightBoundary - tableX + 5, hh, false);
+    }
 
+    // 3. 绘制 删除 (✕) 按钮
+    // 逻辑统一：只有 hover 时显示背景，图标一直显示
+    
+    // 如果悬停在删除按钮上，绘制红色半透明背景 (danger=true)
+    if (this._hover === "sub") {
+        drawHoverOverlay(ctx, btnSubX, btnY, btnSize, btnSize, true);
+    }
+    
+    // 使用 drawSmallX 绘制美观的叉号 (与 CSV Row 风格一致)
+    drawSmallX(ctx, btnSubX, btnY, btnSize, btnSize, "#e05555");
+
+
+    // 4. 绘制文本
     ctx.globalAlpha = 1.0;
     ctx.fillStyle = LiteGraph.WIDGET_TEXT_COLOR;
 
@@ -1931,8 +2092,7 @@ class ExtraPromptWidget {
 
     ctx.save();
     ctx.globalAlpha = 0.95;
-    const maxW = Math.max(0, tableW - 20);
-    ctx.fillText(ellipsizeToWidth(ctx, preview, maxW), tableX + 10, mid + 9);
+    ctx.fillText(ellipsizeToWidth(ctx, preview, maxTextW), tableX + 10, mid + 9);
     ctx.restore();
 
     ctx.font = prevFont;
@@ -1943,7 +2103,8 @@ class ExtraPromptWidget {
 
     if (!ghost) {
       this._bounds.drag = [handleX, handleY, handleW, hh];
-      this._bounds.edit = [tableX, yy, tableW, hh];
+      this._bounds.edit = [tableX, yy, textAreaRightBoundary - tableX, hh];
+      this._bounds.sub = [btnSubX, btnY, btnSize, btnSize];
     }
   }
 
@@ -1979,12 +2140,10 @@ class ExtraPromptWidget {
         const pointerY = pos?.[1];
         if (typeof pointerY === "number") {
           d.ghostY = pointerY - d.offsetY;
-
           const probeY = d.ghostY + ROW_HEIGHT * DRAG_SNAP_FRACTION;
           const lastProbeY = (typeof d.lastProbeY === "number") ? d.lastProbeY : probeY;
           const dirY = probeY - lastProbeY;
           d.lastProbeY = probeY;
-
           const targetIndex = computeTargetIndex(node, probeY, this, dirY);
           const rows = getRowsInOrder(node);
           const currentIndex = rows.indexOf(this);
@@ -1992,7 +2151,6 @@ class ExtraPromptWidget {
           if (clampedTarget !== currentIndex) {
             reorderDraggedRow(node, this, clampedTarget);
           }
-
           node.setDirtyCanvas(true, true);
         }
 
@@ -2005,7 +2163,6 @@ class ExtraPromptWidget {
         endDrag(node, true);
         return true;
       }
-
       return true;
     }
 
@@ -2014,17 +2171,26 @@ class ExtraPromptWidget {
 
     const part = this._hitPart(pos);
 
+    // --- 删除逻辑 ---
+    if (part === "sub") {
+        const idx = node.widgets.indexOf(this);
+        if (idx !== -1) {
+            node.widgets.splice(idx, 1);
+            layoutWidgets(node);
+            recomputeNodeSize(node);
+            node.setDirtyCanvas(true, true);
+        }
+        return true;
+    }
+
     if (part === "drag") {
       const rows = getRowsInOrder(node);
       const startIndex = rows.indexOf(this);
-
       this._dragging = true;
       this._hover = "drag";
-
       const pointerY = pos?.[1] ?? 0;
       const rowTop = typeof this._rowY === "number" ? this._rowY : pointerY;
       const offsetY = pointerY - rowTop;
-
       node._vslinxDrag = {
         row: this,
         offsetY,
@@ -2033,12 +2199,9 @@ class ExtraPromptWidget {
         startIndex,
         lastProbeY: rowTop + ROW_HEIGHT * DRAG_SNAP_FRACTION,
       };
-
       vslinxDragNode = node;
-
       setCanvasCursor("grabbing");
       node.setDirtyCanvas(true, true);
-
       return true;
     }
 
@@ -2624,19 +2787,28 @@ app.registerExtension({
 
       ensureListTopSpacer(node, 10);
       ensureButtonSpacer(node, 10);
-	  ensureGlobalSearchButton(node); 
-      ensureSelectButton(node);
+      // 这里的 ensureGlobalSearchButton 现在会创建 Search+Add 组合控件
+      if (typeof ensureGlobalSearchButton === "function") ensureGlobalSearchButton(node);
+      if (typeof ensureSelectButton === "function") ensureSelectButton(node);
 
       const vals = info?.widgets_values || [];
 
-      const savedExtra = vals.find((v) => v && v.type === "ExtraPromptWidget");
-      const extra = ensureExtraPromptRow(node);
-      if (savedExtra && typeof savedExtra === "object") {
-        extra.value = { ...extra.value, ...savedExtra };
+      // --- 加载已保存的 Additional Prompt ---
+      const savedExtras = vals.filter((v) => v && v.type === "ExtraPromptWidget");
+      
+      // 注意：这里不再自动创建默认行，如果没有保存记录，列表就是空的
+      if (savedExtras.length > 0) {
+          savedExtras.forEach((sVal, index) => {
+              const name = index === 0 ? EXTRA_PROMPT_NAME : `${EXTRA_PROMPT_NAME}_${index + 1}`;
+              const w = new ExtraPromptWidget(name);
+              w._vslinx_id = index === 0 ? EXTRA_PROMPT_ID : `${EXTRA_PROMPT_ID}_${index + 1}`;
+              w.value = { ...w.value, ...sVal };
+              node.addCustomWidget(w);
+          });
       }
 
+      // --- 加载 CSV Rows ---
       const savedRows = vals.filter((v) => v && v.type === "CsvRowWidget" && v.file);
-
       node._csvRowCounter = 0;
       for (const v of savedRows) {
         node._csvRowCounter += 1;
@@ -2645,13 +2817,9 @@ app.registerExtension({
 
         const merged = { ...row.value, ...v };
         if (!Array.isArray(merged.keys)) merged.keys = [];
-
-        if (Array.isArray(merged.key)) {
-          merged.keys = merged.key.slice();
-        }
+        if (Array.isArray(merged.key)) merged.keys = merged.key.slice();
 
         row.value = merged;
-
         row.setFile(v.file).then(() => {
           row.value.key = v.key ?? "(None)";
           if (Array.isArray(v.key)) row.value.keys = v.key.slice();
@@ -2664,6 +2832,7 @@ app.registerExtension({
 
       node._vslinxDrag = null;
 
+      // 排序与布局
       const rows = getRowWidgets(node).slice();
       rows.sort((a, b) => {
         const ao = Number.isFinite(a?.value?.order) ? a.value.order : 0;
@@ -2671,6 +2840,7 @@ app.registerExtension({
         if (ao !== bo) return ao - bo;
         return 0;
       });
+
       const nonRows = (node.widgets || []).filter((w) => !isRowWidget(w));
       node.widgets = [...nonRows, ...rows];
       layoutWidgets(node);
