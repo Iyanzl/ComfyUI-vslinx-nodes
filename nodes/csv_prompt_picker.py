@@ -175,18 +175,25 @@ def invalidate_file_caches(filename: str):
 def find_existing_filename_by_hash(content_hash: str) -> Optional[str]:
     folder = get_promptfiles_dir()
     try:
-        for fn in os.listdir(folder):
-            low = fn.lower()
-            if not low.endswith(_ALLOWED_EXTS):
-                continue
-            full = os.path.join(folder, fn)
-            if not os.path.isfile(full):
-                continue
-            try:
-                if sha256_file(full) == content_hash:
-                    return fn
-            except Exception:
-                continue
+        # Change: Use os.walk to search recursively in subdirectories
+        for root, _, filenames in os.walk(folder):
+            for fn in filenames:
+                low = fn.lower()
+                if not low.endswith(_ALLOWED_EXTS):
+                    continue
+                full = os.path.join(root, fn)
+                
+                # Verify file exists
+                if not os.path.isfile(full):
+                    continue
+                    
+                try:
+                    if sha256_file(full) == content_hash:
+                        # Return path relative to the csv root folder, forcing forward slashes
+                        rel_path = os.path.relpath(full, folder).replace("\\", "/")
+                        return rel_path
+                except Exception:
+                    continue
     except Exception:
         pass
     return None
@@ -380,13 +387,14 @@ class VSLinx_MultiLangPromptPicker:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "Add comma at end?": ("BOOLEAN", {"default": True}),
+                "Add comma?": ("BOOLEAN", {"default": True}),
                 "seed": ("INT", {"default": 0, "min": 0, "max": 0xFFFFFFFFFFFFFFFF, "display": "seed"}),
             },
             "optional": FlexibleOptionalInputType(
                 type=any_type,
                 data={
                     "pre_text": ("STRING", {"forceInput": True}),
+                    "selection_preview": ("STRING", {"forceInput": True}),
                 },
             ),
         }
@@ -398,11 +406,12 @@ class VSLinx_MultiLangPromptPicker:
         return None
 
     def run(self, **kwargs):
-        add_comma_global = bool(kwargs.get("Add comma at end?", True))
+        add_comma_global = bool(kwargs.get("Add comma?", True))
         seed = int(kwargs.get("seed", 0))
         control_after_generate = kwargs.get("control_after_generate", "fixed")
 
         pre_text = kwargs.get("pre_text", "")
+        prev_selection_preview = kwargs.get("selection_preview", "")
         if pre_text is None:
             pre_text = ""
         pre_text = str(pre_text).strip()
@@ -491,15 +500,10 @@ class VSLinx_MultiLangPromptPicker:
                         first_line = first_line[:117] + "..."
                     out_preview.append(f"💬 {first_line}")
 
-        #  拼接逻辑 (核心修改)
-        # 根据开关决定分隔符
         separator = ", " if add_comma_global else " "
         prompt_body = separator.join([p for p in final_parts if isinstance(p, str) and p != ""]).strip()
 
-        # 处理前置文本连接
         if pre_text and prompt_body:
-            # 无论是否勾选逗号，节点之间的连接只使用空格
-            # 除非前置文本自带标点，否则就是 "Color Eye" 这种格式
             if pre_text.rstrip().endswith((",", "，", ".")):
                 prompt = pre_text.rstrip() + " " + prompt_body
             else:
@@ -509,16 +513,24 @@ class VSLinx_MultiLangPromptPicker:
         else:
             prompt = prompt_body
 
-        # 3. 处理末尾逗号
-        # 只有在勾选了选项，且末尾没有逗号时，才追加逗号
         if add_comma_global and prompt:
             clean_prompt = prompt.rstrip()
             if not clean_prompt.endswith(",") and not clean_prompt.endswith("，"):
                 prompt = clean_prompt + ","
 
+        current_sel_str = "\n".join(sel_preview)        
+
+        combined_sel_list = []
+        if prev_selection_preview and str(prev_selection_preview).strip() != "No selections":
+            combined_sel_list.append(str(prev_selection_preview))
+        if current_sel_str:
+            combined_sel_list.append(current_sel_str)
+            
+        final_sel_preview_str = "\n".join(combined_sel_list) if combined_sel_list else "No selections"
+
         return (
             prompt,
-            "\n".join(sel_preview) if sel_preview else "No selections",
+            final_sel_preview_str,  
             "\n".join(out_preview) if out_preview else "No output",
         )
 
