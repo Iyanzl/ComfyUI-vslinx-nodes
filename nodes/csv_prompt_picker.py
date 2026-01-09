@@ -118,12 +118,18 @@ def parse_csv_labels_map(path: str) -> Tuple[List[str], Dict[str, str]]:
     mapping: Dict[str, str] = {}
 
     for row in reader:
-        if not row or len(row) < 2:
+        # --- 修改这里：允许只有1列的行 ---
+        if not row or not str(row[0]).strip():
             continue
+        
         label = str(row[0]).strip()
-        out = str(row[1]).strip()
-        if not label:
-            continue
+        
+        # 如果有第二列则取第二列，否则取第一列内容作为输出
+        if len(row) >= 2:
+            out = str(row[1]).strip()
+        else:
+            out = label
+            
         if label not in mapping:
             labels.append(label)
         mapping[label] = out
@@ -410,12 +416,11 @@ class VSLinx_MultiLangPromptPicker:
         seed = int(kwargs.get("seed", 0))
         control_after_generate = kwargs.get("control_after_generate", "fixed")
 
-        pre_text = kwargs.get("pre_text", "")
-        prev_selection_preview = kwargs.get("selection_preview", "")
-        if pre_text is None:
-            pre_text = ""
-        pre_text = str(pre_text).strip()
+        # 1. 获取输入（支持串流）
+        pre_text = str(kwargs.get("pre_text", "") or "").strip()
+        prev_selection_preview = str(kwargs.get("selection_preview", "") or "").strip()
 
+        # 2. 随机种子处理
         if control_after_generate == "randomize":
             eff_seed = time.time_ns() & 0xFFFFFFFFFFFFFFFF
         elif control_after_generate == "increment":
@@ -424,114 +429,114 @@ class VSLinx_MultiLangPromptPicker:
             eff_seed = (seed - 1) & 0xFFFFFFFFFFFFFFFF
         else:
             eff_seed = seed
-
         rng = random.Random(eff_seed)
 
+        # 3. 标点定义
+        punctuation_marks = (",", "，", ".", "。", "!", "！", "?", "？", ";", "；", ":", "：")
+
+        # 4. 收集选中的项
         items = []
         for k, v in kwargs.items():
             if not (isinstance(k, str) and k.lower().startswith("csv_")):
                 continue
             if not isinstance(v, dict):
                 continue
-
             vtype = v.get("type")
             if vtype not in ("CsvRowWidget", "ExtraPromptWidget"):
                 continue
-
             order = v.get("order", 0)
             try:
                 order = int(order)
             except Exception:
                 order = 0
-
             items.append((order, k, v))
 
         items.sort(key=lambda t: (t[0], t[1]))
 
-        final_parts: List[str] = []
-        sel_preview: List[str] = []
-        out_preview: List[str] = []
+        # 5. 分别提取两组片段：[提示词片段] 和 [标签片段]
+        prompt_segments = []
+        label_segments = []
 
         for _, _, v in items:
             vtype = v.get("type")
-
             if vtype == "CsvRowWidget":
                 filename = v.get("file")
-
-                if not filename or not isinstance(filename, str):
-                    continue
-
+                if not filename: continue
                 try:
                     filename = sanitize_prompt_relpath(filename)
                     labels, mapping = get_cached_promptfile(filename)
-                except Exception:
-                    continue
-
-                if not labels:
-                    continue
-
+                except Exception: continue
+                
                 selected_keys = _normalize_selected_keys(v)
-                if not selected_keys:
-                    continue
-
-                for original_key in selected_keys:
-                    key = original_key
-
-                    if key == "Random":
-                        key = rng.choice(labels)
-
-                    out = mapping.get(key, "")
-                    if out and isinstance(out, str) and out.strip():
-                        out = out.strip()
-                        final_parts.append(out)
-                        sel_preview.append(f"🔀 {key}" if original_key == "Random" else f"🧾 {key}")
-                        out_preview.append(f"💬 {out}")
+                for key in selected_keys:
+                    actual_key = key
+                    if key == "Random" and labels:
+                        actual_key = rng.choice(labels)
+                    
+                    # 从 mapping 中获取，如果不存在则直接使用 key 本身
+                    val = mapping.get(actual_key, "").strip()
+                    if not val:
+                        val = actual_key
+                    
+                    prompt_segments.append(val)
+                    label_segments.append(actual_key)
 
             elif vtype == "ExtraPromptWidget":
-                text = v.get("text", "")
-                if not isinstance(text, str):
-                    text = str(text)
-                text = text.strip()
+                text = str(v.get("text", "")).strip()
                 if text:
-                    final_parts.append(text)
-                    sel_preview.append("📝 Additional prompt")
-                    first_line = text.splitlines()[0].strip() if text.splitlines() else text
-                    if len(first_line) > 120:
-                        first_line = first_line[:117] + "..."
-                    out_preview.append(f"💬 {first_line}")
+                    prompt_segments.append(text)
+                    label_segments.append(text)
 
-        separator = ", " if add_comma_global else " "
-        prompt_body = separator.join([p for p in final_parts if isinstance(p, str) and p != ""]).strip()
-
-        if pre_text and prompt_body:
-            if pre_text.rstrip().endswith((",", "，", ".")):
-                prompt = pre_text.rstrip() + " " + prompt_body
-            else:
-                prompt = pre_text.rstrip() + " " + prompt_body
-        elif pre_text:
-            prompt = pre_text
-        else:
-            prompt = prompt_body
-
-        if add_comma_global and prompt:
-            clean_prompt = prompt.rstrip()
-            if not clean_prompt.endswith(",") and not clean_prompt.endswith("，"):
-                prompt = clean_prompt + ","
-
-        current_sel_str = "\n".join(sel_preview)        
-
-        combined_sel_list = []
-        if prev_selection_preview and str(prev_selection_preview).strip() != "No selections":
-            combined_sel_list.append(str(prev_selection_preview))
-        if current_sel_str:
-            combined_sel_list.append(current_sel_str)
+        # 6. 核心拼接函数（完全模拟提示词逻辑）
+        def build_final_string(prefix, segments, add_comma):
+            sep = ", " if add_comma else " "
+            result = prefix
             
-        final_sel_preview_str = "\n".join(combined_sel_list) if combined_sel_list else "No selections"
+            for seg in segments:
+                if not result:
+                    result = seg
+                    continue
+                
+                # 检查前文末尾和当前开头是否有标点
+                last_char = result.rstrip()[-1:]
+                current_is_punc = seg in punctuation_marks
+                prev_has_punc = last_char in punctuation_marks
+                
+                if current_is_punc:
+                    # 如果当前是标点，直接贴上去
+                    result = result.rstrip() + seg
+                elif prev_has_punc:
+                    # 如果前文有标点，加个空格保持美观
+                    result = result.rstrip() + " " + seg
+                else:
+                    # 都没有标点，按设置补连接符
+                    result = result.rstrip() + sep + seg
+            
+            # 处理整体末尾逗号
+            if add_comma and result:
+                if not result.rstrip()[-1:] in punctuation_marks:
+                    result = result.rstrip() + ","
+            
+            return result
+
+        # 7. 生成两个完全相同逻辑的输出
+        final_prompt = build_final_string(pre_text, prompt_segments, add_comma_global)
+        final_labels = build_final_string(prev_selection_preview, label_segments, add_comma_global)
+
+        # 8. 视觉预览（仅用于界面展示的辅助，保留换行以便观察）
+        preview_list = []
+        for i in range(len(label_segments)):
+            l = label_segments[i]
+            p = prompt_segments[i]
+            if l == p:
+                preview_list.append(f"🔹 {l}")
+            else:
+                preview_list.append(f"🏷️ {l} -> 💬 {p}")
 
         return (
-            prompt,
-            final_sel_preview_str,  
-            "\n".join(out_preview) if out_preview else "No output",
+            final_prompt,        # 输出1：提示词内容
+            final_labels,        # 输出2：标签/中文内容 (格式与输出1完全一致)
+            "\n".join(preview_list) if preview_list else "No selections" # 输出3：视觉参考
         )
 
 
