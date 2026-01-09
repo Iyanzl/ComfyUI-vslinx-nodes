@@ -479,444 +479,340 @@ function showConflictModal({ filename, suggested }) {
   });
 }
 
-function showFilePickerModal(files, current = "") {
+function showFilePickerModal(allFiles, nodeExistingFiles = [], activeFile = null, defaultMulti = false) {
   return new Promise((resolve) => {
-    const overlay = document.createElement("div");
-    overlay.style.position = "fixed";
-    overlay.style.inset = "0";
-    overlay.style.background = "rgba(0,0,0,0.55)";
-    overlay.style.zIndex = "999999";
-    overlay.style.display = "flex";
-    overlay.style.alignItems = "center";
-    overlay.style.justifyContent = "center";
+    // nodeExistingFiles: All files currently used in the node (for checkmarks)
+    // activeFile: The specific file of the row that opened the modal (for highlight)
+    
+    // In multi-mode, we initialize with what's already in the node to allow adding/removing
+    const multiSelected = new Set(nodeExistingFiles); 
+    
+    let isMulti = defaultMulti;
+    let inContentsMode = false;
+    
+    // Expansion state for folders
+    const expandedFolders = new Set(); 
 
-    const card = document.createElement("div");
-    card.style.width = "620px";
-    card.style.maxWidth = "94vw";
-    card.style.maxHeight = "84vh";
-    card.style.background = "#1f1f1f";
-    card.style.border = "1px solid #444";
-    card.style.borderRadius = "12px";
-    card.style.padding = "14px";
-    card.style.color = "#eee";
-    card.style.fontFamily = "sans-serif";
-    card.style.boxShadow = "0 10px 30px rgba(0,0,0,0.35)";
-    card.style.display = "flex";
-    card.style.flexDirection = "column";
-    card.style.gap = "10px";
-
-    const title = document.createElement("div");
-    title.textContent = "Select CSV file (input/csv)";
-    title.style.fontSize = "15px";
-    title.style.fontWeight = "600";
-
-    const searchRow = document.createElement("div");
-    searchRow.style.display = "flex";
-    searchRow.style.gap = "10px";
-    searchRow.style.alignItems = "stretch";
-
-    const search = document.createElement("input");
-    search.type = "text";
-    search.placeholder = "Search...";
-    search.style.flex = "1 1 auto";
-    search.style.height = "40px";
-    search.style.padding = "10px";
-    search.style.borderRadius = "10px";
-    search.style.border = "1px solid #555";
-    search.style.background = "#2b2b2b";
-    search.style.color = "#eee";
-    search.style.outline = "none";
-
-    const inContentsBtn = document.createElement("button");
-    inContentsBtn.type = "button";
-    inContentsBtn.textContent = "In Contents?";
-    inContentsBtn.title = "Search inside CSV contents (both columns)";
-    inContentsBtn.style.flex = "0 0 auto";
-    inContentsBtn.style.width = "120px";
-    inContentsBtn.style.height = "40px";
-    inContentsBtn.style.borderRadius = "10px";
-    inContentsBtn.style.border = "1px solid #555";
-    inContentsBtn.style.background = "#2b2b2b";
-    inContentsBtn.style.color = "#eee";
-    inContentsBtn.style.cursor = "pointer";
-    inContentsBtn.style.userSelect = "none";
-    inContentsBtn.style.whiteSpace = "nowrap";
-    inContentsBtn.style.padding = "0 12px";
-    inContentsBtn.style.fontSize = "12px";
-
-    inContentsBtn._active = false;
-
-    function setInContentsVisual() {
-      if (inContentsBtn._active) {
-        inContentsBtn.style.border = "1px solid #2d7a40";
-        inContentsBtn.style.boxShadow = "0 0 0 1px rgba(45,122,64,0.35)";
-        inContentsBtn.style.background = "#1f3a25";
-      } else {
-        inContentsBtn.style.border = "1px solid #555";
-        inContentsBtn.style.boxShadow = "none";
-        inContentsBtn.style.background = "#2b2b2b";
-      }
-    }
-
-    setInContentsVisual();
-
-    searchRow.appendChild(search);
-    searchRow.appendChild(inContentsBtn);
-
-
-    const list = document.createElement("div");
-    list.style.flex = "1";
-    list.style.overflow = "auto";
-    list.style.border = "1px solid #333";
-    list.style.borderRadius = "10px";
-    list.style.background = "#181818";
-
-    const footer = document.createElement("div");
-    footer.style.display = "flex";
-    footer.style.justifyContent = "flex-end";
-    footer.style.gap = "8px";
-
-    const cancel = document.createElement("button");
-    cancel.textContent = "Cancel";
-    cancel.style.padding = "8px 10px";
-    cancel.style.borderRadius = "10px";
-    cancel.style.border = "1px solid #555";
-    cancel.style.background = "#2b2b2b";
-    cancel.style.color = "#eee";
-    cancel.style.cursor = "pointer";
-
-    cancel.onclick = () => {
-      document.body.removeChild(overlay);
-      resolve(null);
-    };
-
-    overlay.onclick = (e) => {
-      if (e.target === overlay) cancel.onclick();
-    };
-
-    let renderSeq = 0;
-
-    const expanded = new Set();
-    expanded.add("");
-
-    function buildTree(paths) {
-      const root = { name: "", path: "", dirs: new Map(), files: [] };
-
-      for (const pRaw of (paths || [])) {
-        const p = String(pRaw ?? "").replace(/\\/g, "/").replace(/^\/+/, "");
-        if (!p) continue;
-
-        const parts = p.split("/").filter(Boolean);
-        if (!parts.length) continue;
-
-        let node = root;
-        for (let i = 0; i < parts.length; i++) {
-          const part = parts[i];
-          const isLast = (i === parts.length - 1);
-
-          if (isLast) {
-            node.files.push({
-              name: part,
-              path: parts.slice(0, i).join("/") ? (parts.slice(0, i).join("/") + "/" + part) : part
-            });
-          } else {
-            const dirPath = parts.slice(0, i + 1).join("/");
-            if (!node.dirs.has(part)) {
-              node.dirs.set(part, { name: part, path: dirPath, dirs: new Map(), files: [] });
-            }
-            node = node.dirs.get(part);
+    // Build File Tree
+    function buildFileTree(files) {
+      const root = { folders: {}, files: [] };
+      for (const f of files) {
+        const parts = f.split('/');
+        const fileName = parts.pop();
+        let current = root;
+        let pathAccumulator = "";
+        
+        for (const folder of parts) {
+          pathAccumulator = pathAccumulator ? `${pathAccumulator}/${folder}` : folder;
+          if (!current.folders[folder]) {
+            current.folders[folder] = { 
+              name: folder, 
+              fullPath: pathAccumulator,
+              folders: {}, 
+              files: [] 
+            };
           }
+          current = current.folders[folder];
         }
+        current.files.push({ name: fileName, fullPath: f });
       }
-
       return root;
     }
-
+    
+    // Sort Helper: Folders first (alphabetical), then Files (alphabetical)
     function sortTree(node) {
-      node.files.sort((a, b) => a.path.toLowerCase().localeCompare(b.path.toLowerCase()));
-      const dirsArr = Array.from(node.dirs.values());
-      dirsArr.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
-      node._dirsSorted = dirsArr;
-      for (const d of dirsArr) sortTree(d);
+      const folderKeys = Object.keys(node.folders).sort((a, b) => a.localeCompare(b));
+      const sortedFolders = folderKeys.map(k => {
+        sortTree(node.folders[k]);
+        return node.folders[k];
+      });
+      node.files.sort((a, b) => a.name.localeCompare(b.name));
+      return { folders: sortedFolders, files: node.files };
     }
 
-    function renderRowBase({ isFolder, label, subLabel = "", depth = 0, isActive = false, danger = false }) {
-      const row = document.createElement("div");
-      row.style.display = "flex";
-      row.style.alignItems = "center";
-      row.style.gap = "8px";
-      row.style.padding = "10px 12px";
-      row.style.cursor = "pointer";
-      row.style.borderBottom = "1px solid #222";
-      row.style.whiteSpace = "nowrap";
-      row.style.overflow = "hidden";
-
-      row.style.paddingLeft = `${12 + depth * 16}px`;
-
-      if (isActive) {
-        row.style.background = "#2a2a2a";
-        row.style.fontWeight = "600";
+    const fileTreeRoot = buildFileTree(allFiles);
+    // Pre-expand root folders if the list isn't massive, or keep collapsed. 
+    // Let's expand folders that contain the activeFile by default.
+    if (activeFile) {
+      const parts = activeFile.split('/');
+      parts.pop();
+      let pathAcc = "";
+      for (const p of parts) {
+        pathAcc = pathAcc ? `${pathAcc}/${p}` : p;
+        expandedFolders.add(pathAcc);
       }
+    }
 
-      row.onmouseenter = () => (row.style.background = isActive ? "#2f2f2f" : (danger ? "#2a1e1e" : "#232323"));
-      row.onmouseleave = () => (row.style.background = isActive ? "#2a2a2a" : "transparent");
+    // UI Elements
+    const overlay = document.createElement("div");
+    overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:999999;display:flex;align-items:center;justify-content:center;";
 
-      const icon = document.createElement("span");
-      icon.textContent = isFolder ? "📁" : "📄";
-      icon.style.opacity = "0.9";
-      icon.style.flex = "0 0 auto";
+    const card = document.createElement("div");
+    card.style.cssText = "width:720px;max-width:94vw;max-height:86vh;background:#1f1f1f;border:1px solid #444;border-radius:12px;padding:14px;color:#eee;font-family:sans-serif;box-shadow:0 10px 30px rgba(0,0,0,0.35);display:flex;flex-direction:column;gap:10px;";
 
-      const nameSpan = document.createElement("span");
-      nameSpan.textContent = label;
-      nameSpan.style.flex = "0 1 auto";
-      nameSpan.style.overflow = "hidden";
-      nameSpan.style.textOverflow = "ellipsis";
+    const title = document.createElement("div");
+    title.innerHTML = `Select CSV File <span style="font-weight:400;opacity:0.6;font-size:0.85em;margin-left:8px;">(Root: ComfyUI/input/csv)</span>`;
+    title.style.cssText = "font-size:15px;font-weight:600;";
 
-      row.appendChild(icon);
-      row.appendChild(nameSpan);
+    const toolBar = document.createElement("div");
+    toolBar.style.cssText = "display:flex;gap:8px;align-items:stretch;";
 
-      if (subLabel) {
-        const sub = document.createElement("span");
-        sub.textContent = subLabel;
-        sub.style.opacity = "0.55";
-        sub.style.fontSize = "12px";
-        sub.style.flex = "1 1 auto";
-        sub.style.overflow = "hidden";
-        sub.style.textOverflow = "ellipsis";
-        sub.style.minWidth = "0";
-        row.appendChild(sub);
+    const searchInput = document.createElement("input");
+    searchInput.type = "text";
+    searchInput.placeholder = "Search filenames (flattens view)...";
+    searchInput.style.cssText = "flex:1;height:38px;padding:0 10px;border-radius:8px;border:1px solid #555;background:#2b2b2b;color:#eee;outline:none;";
+
+    const contentBtn = document.createElement("button");
+    contentBtn.textContent = "In Contents?";
+    contentBtn.style.cssText = "padding:0 12px;border-radius:8px;border:1px solid #555;background:#2b2b2b;color:#eee;cursor:pointer;font-size:12px;white-space:nowrap;";
+
+    const multiBtn = document.createElement("button");
+    multiBtn.style.cssText = "width:38px;height:38px;border-radius:8px;border:1px solid #555;background:#2b2b2b;color:#eee;cursor:pointer;display:grid;place-items:center;padding:0;font-size:16px;";
+    
+    function updateMultiVisual() {
+      if (isMulti) {
+        multiBtn.textContent = "✓"; 
+        multiBtn.title = "Multi-select ON";
+        multiBtn.style.background = "#1f3a25";
+        multiBtn.style.borderColor = "#2d7a40";
       } else {
-        const spacer = document.createElement("span");
-        spacer.style.flex = "1 1 auto";
-        row.appendChild(spacer);
-      }
-
-      return row;
-    }
-
-    function renderEmpty(text) {
-      list.innerHTML = "";
-      const empty = document.createElement("div");
-      empty.textContent = text;
-      empty.style.padding = "10px";
-      empty.style.opacity = "0.8";
-      list.appendChild(empty);
-    }
-
-    function flattenTreeVisible(node, out, depth = 0) {
-      const dirs = node._dirsSorted || Array.from(node.dirs.values());
-      for (const d of dirs) {
-        out.push({ kind: "dir", depth, name: d.name, path: d.path, node: d });
-        if (expanded.has(d.path)) {
-          flattenTreeVisible(d, out, depth + 1);
-        }
-      }
-
-      for (const f of (node.files || [])) {
-        out.push({ kind: "file", depth, name: f.name, path: f.path });
+        multiBtn.textContent = "⧉";
+        multiBtn.title = "Single-select (Replace)";
+        multiBtn.style.background = "#2b2b2b";
+        multiBtn.style.borderColor = "#555";
       }
     }
+    updateMultiVisual();
+    multiBtn.onclick = () => { isMulti = !isMulti; updateMultiVisual(); renderList(); };
 
-    function ensurePathExpandedForCurrent(cur) {
-      const p = String(cur ?? "").replace(/\\/g, "/");
-      if (!p || !p.includes("/")) return;
-      const parts = p.split("/").filter(Boolean);
-      let acc = "";
-      for (let i = 0; i < parts.length - 1; i++) {
-        acc = acc ? (acc + "/" + parts[i]) : parts[i];
-        expanded.add(acc);
-      }
-    }
-
-    async function render(filterText, inContentsMode) {
-      const mySeq = ++renderSeq;
-
-      const qRaw = (filterText || "").trim();
-      const q = qRaw.toLowerCase();
-
-      ensurePathExpandedForCurrent(current);
-
-      if (!inContentsMode) {
-        if (q) {
-          list.innerHTML = "";
-          const shown = (files || []).filter((fn) => !q || String(fn).toLowerCase().includes(q));
-          if (!shown.length) {
-            renderEmpty("No matching files.");
-            return;
-          }
-
-          for (const fn of shown) {
-            const isActive = (String(fn) === String(current));
-            const row = renderRowBase({
-              isFolder: false,
-              label: fn,
-              depth: 0,
-              isActive,
-            });
-
-            row.onclick = () => {
-              document.body.removeChild(overlay);
-              resolve(fn);
-            };
-
-            list.appendChild(row);
-          }
-
-          return;
-        }
-
-        list.innerHTML = "";
-
-        const tree = buildTree(files || []);
-        sortTree(tree);
-
-        const visible = [];
-        flattenTreeVisible(tree, visible, 0);
-
-        if (!visible.length) {
-          renderEmpty("No .csv files found in input/csv");
-          return;
-        }
-
-        for (const entry of visible) {
-          if (entry.kind === "dir") {
-            const isOpen = expanded.has(entry.path);
-            const label = entry.name;
-            const row = renderRowBase({
-              isFolder: true,
-              label: `${isOpen ? "▼" : "▶"} ${label}`,
-              depth: entry.depth,
-              isActive: false,
-            });
-
-            row.onclick = (e) => {
-              e.preventDefault?.();
-              e.stopPropagation?.();
-
-              if (expanded.has(entry.path)) expanded.delete(entry.path);
-              else expanded.add(entry.path);
-
-              render(search.value, inContentsBtn._active);
-            };
-
-            list.appendChild(row);
-            continue;
-          }
-
-          const isActive = (String(entry.path) === String(current));
-          const row = renderRowBase({
-            isFolder: false,
-            label: entry.name,
-            subLabel: entry.path.includes("/") ? entry.path : "",
-            depth: entry.depth,
-            isActive,
-          });
-
-          row.onclick = () => {
-            document.body.removeChild(overlay);
-            resolve(entry.path);
-          };
-
-          list.appendChild(row);
-        }
-
-        return;
-      }
-
-      if (!qRaw) {
-        list.innerHTML = "";
-        for (const fn of (files || [])) {
-          const isActive = (String(fn) === String(current));
-          const row = renderRowBase({
-            isFolder: false,
-            label: fn,
-            depth: 0,
-            isActive,
-          });
-
-          row.onclick = () => {
-            document.body.removeChild(overlay);
-            resolve(fn);
-          };
-
-          list.appendChild(row);
-        }
-        return;
-      }
-
-      renderEmpty("Searching contents...");
-
-      const results = [];
-      for (const fn of (files || [])) {
-        if (mySeq !== renderSeq) return;
-
-        let hits = [];
-        try {
-          hits = await _vslinxFindHitsInFile(fn, qRaw);
-        } catch (_) {
-          hits = [];
-        }
-
-        if (hits.length) results.push({ fn, hits });
-      }
-
-      if (mySeq !== renderSeq) return;
-
-      list.innerHTML = "";
-      if (!results.length) {
-        renderEmpty("No matching files.");
-        return;
-      }
-
-      for (const r of results) {
-        const isActive = (String(r.fn) === String(current));
-        const row = renderRowBase({
-          isFolder: false,
-          label: r.fn,
-          subLabel: Array.isArray(r.hits) && r.hits.length ? `(${r.hits.join(", ")})` : "",
-          depth: 0,
-          isActive,
-        });
-
-        row.onclick = () => {
-          document.body.removeChild(overlay);
-          resolve(r.fn);
-        };
-
-        list.appendChild(row);
-      }
-    }
-
-    let debounceT = null;
-    function scheduleRender() {
-      if (debounceT) clearTimeout(debounceT);
-      const delay = inContentsBtn._active ? 180 : 0;
-      debounceT = setTimeout(() => {
-        render(search.value, inContentsBtn._active);
-      }, delay);
-    }
-
-    search.oninput = scheduleRender;
-
-    inContentsBtn.onclick = (e) => {
-      e.preventDefault?.();
-      e.stopPropagation?.();
-      inContentsBtn._active = !inContentsBtn._active;
-      setInContentsVisual();
-      scheduleRender();
+    contentBtn.onclick = () => {
+        inContentsMode = !inContentsMode;
+        contentBtn.style.background = inContentsMode ? "#1f3a25" : "#2b2b2b";
+        contentBtn.style.borderColor = inContentsMode ? "#2d7a40" : "#555";
+        searchInput.placeholder = inContentsMode ? "Type to search content..." : "Search filenames (flattens view)...";
+        renderList();
     };
 
-    footer.appendChild(cancel);
+    toolBar.append(searchInput, contentBtn, multiBtn);
 
-    card.appendChild(title);
-    card.appendChild(searchRow);
-    card.appendChild(list);
-    card.appendChild(footer);
-    overlay.appendChild(card);
-    document.body.appendChild(overlay);
+    const listContainer = document.createElement("div");
+    listContainer.style.cssText = "flex:1;overflow-y:auto;border:1px solid #333;border-radius:8px;background:#181818;min-height:240px;";
 
-    render("", false);
-    setTimeout(() => search.focus(), 0);
+    const footer = document.createElement("div");
+    footer.style.cssText = "display:flex;justify-content:flex-end;gap:8px;padding-top:4px;";
+    
+    const cancelBtn = document.createElement("button");
+    cancelBtn.textContent = "Cancel";
+    cancelBtn.style.cssText = "padding:8px 14px;border-radius:8px;border:1px solid #555;background:#2b2b2b;color:#eee;cursor:pointer;";
+    
+    const applyBtn = document.createElement("button");
+    applyBtn.textContent = "Apply";
+    applyBtn.style.cssText = "padding:8px 14px;border-radius:8px;border:1px solid #2d7a40;background:#1f3a25;color:#eee;cursor:pointer;font-weight:600;";
+
+    // --- Rendering Logic ---
+
+    function createRow(text, fullPath, isFolder, depth, isMatch = false, subText = "") {
+        const row = document.createElement("div");
+        row.style.cssText = "display:flex;align-items:center;padding:6px 12px;border-bottom:1px solid #222;cursor:pointer;user-select:none;";
+        
+        // Indentation
+        row.style.paddingLeft = `${12 + depth * 20}px`;
+
+        const isUsedInNode = nodeExistingFiles.includes(fullPath);
+        const isActiveRowFile = (fullPath === activeFile);
+        const isMultiSelected = isMulti && multiSelected.has(fullPath);
+
+        // Background styling
+        if (isActiveRowFile && !isFolder) {
+             // Highlight specifically the file from the current row
+             row.style.background = "rgba(70, 130, 180, 0.25)"; 
+             row.style.borderLeft = "3px solid #4a90e2";
+             row.style.paddingLeft = `${9 + depth * 20}px`; // adjust for border
+        } else if (isMultiSelected && !isFolder) {
+             row.style.background = "#242e25";
+        }
+
+        // Icon / Checkbox
+        const iconArea = document.createElement("div");
+        iconArea.style.cssText = "width:20px;height:20px;margin-right:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:12px;color:#888;";
+        
+        if (isFolder) {
+            const isExpanded = expandedFolders.has(fullPath);
+            iconArea.textContent = isExpanded ? "▼" : "▶";
+            iconArea.style.fontSize = "10px";
+            row.style.background = "#1a1a1a";
+            row.style.color = "#ccc";
+        } else {
+            // Checkmark logic:
+            // Always show checkmark if it's in the node (nodeExistingFiles) OR selected in multi-mode
+            const showCheck = isUsedInNode || isMultiSelected;
+            // Visual distinction: Green for multi-select active, Greyish/Dim for just "in node" but not active target? 
+            // Prompt says: "put chosen files at front with check mark... multi select click existing to cancel"
+            
+            iconArea.style.border = showCheck ? "1px solid #4caf50" : "1px solid #555";
+            iconArea.style.borderRadius = "4px";
+            iconArea.style.background = showCheck ? "rgba(76, 175, 80, 0.2)" : "transparent";
+            iconArea.textContent = showCheck ? "✓" : "";
+            iconArea.style.color = showCheck ? "#4caf50" : "transparent";
+        }
+
+        const textCol = document.createElement("div");
+        textCol.style.cssText = "flex:1;overflow:hidden;";
+        
+        const mainText = document.createElement("div");
+        mainText.textContent = text;
+        mainText.style.cssText = "white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#eee;";
+        if (isFolder) mainText.style.fontWeight = "600";
+        if (isActiveRowFile) mainText.style.fontWeight = "700";
+        
+        textCol.appendChild(mainText);
+
+        if (subText) {
+            const sub = document.createElement("div");
+            sub.textContent = subText;
+            sub.style.cssText = "font-size:11px;color:#888;margin-top:2px;";
+            textCol.appendChild(sub);
+        }
+
+        row.appendChild(iconArea);
+        row.appendChild(textCol);
+
+        // Hover
+        row.onmouseenter = () => { if (!isActiveRowFile && !isMultiSelected) row.style.backgroundColor = "#2a2a2a"; };
+        row.onmouseleave = () => { 
+            if (!isActiveRowFile && !isMultiSelected) row.style.backgroundColor = isFolder ? "#1a1a1a" : "transparent"; 
+            if (isActiveRowFile) row.style.backgroundColor = "rgba(70, 130, 180, 0.25)";
+            if (isMultiSelected && !isActiveRowFile) row.style.backgroundColor = "#242e25";
+        };
+
+        // Click Logic
+        row.onclick = (e) => {
+            e.preventDefault(); e.stopPropagation();
+
+            if (isFolder) {
+                if (expandedFolders.has(fullPath)) expandedFolders.delete(fullPath);
+                else expandedFolders.add(fullPath);
+                renderList();
+                return;
+            }
+
+            if (isMulti) {
+                if (multiSelected.has(fullPath)) {
+                    multiSelected.delete(fullPath);
+                } else {
+                    multiSelected.add(fullPath);
+                }
+                renderList(); // Re-render to update checks
+            } else {
+                // Single Select: Always allow selection, even if duplicate (per prompt)
+                document.body.removeChild(overlay);
+                resolve([fullPath]);
+            }
+        };
+
+        return row;
+    }
+
+    // Recursive Tree Renderer
+    function renderTree(container, node, depth) {
+        const sorted = sortTree(node);
+        
+        // Render Folders
+        for (const folder of sorted.folders) {
+            container.appendChild(createRow(folder.name, folder.fullPath, true, depth));
+            if (expandedFolders.has(folder.fullPath)) {
+                renderTree(container, folder, depth + 1);
+            }
+        }
+        
+        // Render Files
+        for (const file of sorted.files) {
+            container.appendChild(createRow(file.name, file.fullPath, false, depth));
+        }
+    }
+
+    let renderSeq = 0;
+    async function renderList() {
+        const seq = ++renderSeq;
+        const qRaw = searchInput.value.trim();
+        const q = qRaw.toLowerCase();
+        
+        listContainer.innerHTML = "";
+
+        // Mode 1: Content Search (Flattened)
+        if (inContentsMode && qRaw) {
+             listContainer.innerHTML = '<div style="padding:20px;text-align:center;opacity:0.5;">Searching contents...</div>';
+             const results = [];
+             for (const fn of allFiles) {
+                if (seq !== renderSeq) return;
+                try {
+                    const hits = await _vslinxFindHitsInFile(fn, qRaw);
+                    if (hits.length > 0) results.push({ fn, hits });
+                } catch(e){}
+             }
+             if (seq !== renderSeq) return;
+             listContainer.innerHTML = "";
+             if (!results.length) { listContainer.innerHTML = '<div style="padding:20px;text-align:center;">No matches</div>'; return; }
+             
+             // Sort: Selected first, then alpha
+             results.sort((a,b) => {
+                 const aSel = nodeExistingFiles.includes(a.fn);
+                 const bSel = nodeExistingFiles.includes(b.fn);
+                 if(aSel && !bSel) return -1;
+                 if(!aSel && bSel) return 1;
+                 return a.fn.localeCompare(b.fn);
+             });
+
+             results.forEach(item => {
+                 const sub = "Matches: " + item.hits.slice(0,3).join(", ");
+                 listContainer.appendChild(createRow(item.fn, item.fn, false, 0, true, sub));
+             });
+             return;
+        }
+
+        // Mode 2: Filename Search (Flattened)
+        if (!inContentsMode && qRaw) {
+            const filtered = allFiles.filter(f => f.toLowerCase().includes(q));
+            // Sort: Selected first
+            filtered.sort((a,b) => {
+                 const aSel = nodeExistingFiles.includes(a);
+                 const bSel = nodeExistingFiles.includes(b);
+                 if(aSel && !bSel) return -1;
+                 if(!aSel && bSel) return 1;
+                 return a.localeCompare(b);
+            });
+            filtered.forEach(fn => {
+                listContainer.appendChild(createRow(fn, fn, false, 0));
+            });
+            if(filtered.length === 0) listContainer.innerHTML = '<div style="padding:20px;text-align:center;">No matches</div>';
+            return;
+        }
+
+        // Mode 3: Tree View (Default, no search)
+        // Note: SortTree does not automatically hoist selected files to the top within folders 
+        // because that breaks the folder structure. However, the prompt says "Any situation put chosen files at front".
+        // In Tree view, moving files out of folders to the top is confusing. 
+        // We will stick to highlighting them clearly with checks. 
+        // OR, if the user really wants a "Selected List", we could add a "Show Selected" toggle.
+        // For now, we respect the Folder Structure hierarchy as priority for navigation.
+        
+        const root = buildFileTree(allFiles);
+        renderTree(listContainer, root, 0);
+    }
+
+    let debounceTimer;
+    searchInput.oninput = () => { clearTimeout(debounceTimer); debounceTimer = setTimeout(renderList, 300); };
+    
+    cancelBtn.onclick = () => { document.body.removeChild(overlay); resolve(null); };
+    applyBtn.onclick = () => { document.body.removeChild(overlay); resolve(Array.from(multiSelected)); };
+
+    footer.append(cancelBtn, applyBtn);
+    card.append(title, toolBar, listContainer, footer);
+    overlay.append(card);
+    document.body.append(overlay);
+
+    renderList();
+    setTimeout(() => searchInput.focus(), 0);
   });
 }
 
@@ -1623,44 +1519,75 @@ function ensureSelectButton(node) {
   ensureButtonSpacer(node, 10);
 
   const btn = node.addWidget("button", BUTTON_LABEL, null, async () => {
-    const files = await pickFilesFromDialog();
-    if (!files || !files.length) return true;
-
-    for (const file of files) {
-      try {
-        const { cancelled, overwriteWasChosen, up } = await uploadWithConflictResolution(file);
-        if (cancelled) continue;
-
-        const filename = up.filename;
-
-        if (up.deduped === true && hasRowForFilename(node, filename)) {
-          toast("info", "Already added", filename, 2500);
-          continue;
+    try {
+        const files = await listPromptFiles();
+        if (!files.length) {
+            toast("warn", "No files", "No .csv files found in input/csv", 3500);
+            return true;
         }
 
-        if (up.overwritten === true || overwriteWasChosen) {
-          removeRowsForFilename(node, filename);
+        // Collect currently used files
+        const currentFiles = getRowWidgets(node)
+            .filter(w => w.value.type === "CsvRowWidget" && w.value.file)
+            .map(w => w.value.file);
+
+        // Open Modal in Multi-Select Mode (True)
+        // No specific "active" file to highlight specially, just the set of existing ones.
+        const selection = await showFilePickerModal(files, currentFiles, null, true);
+
+        if (!selection) return true; // Cancelled
+
+        // Logic to ADD new selections. 
+        // For files unchecked (removed from selection), we should remove the rows.
+        
+        const newSelectionSet = new Set(selection);
+        
+        // 1. Remove rows that were unchecked
+        const rowsToRemove = [];
+        const rows = getRowWidgets(node).filter(w => w.value.type === "CsvRowWidget");
+        for (const row of rows) {
+             // If row has a file, and that file is NOT in the new set, mark for removal
+             if (row.value.file && !newSelectionSet.has(row.value.file)) {
+                 rowsToRemove.push(row);
+             }
+             // Note: If multiple rows have the same file and it is unchecked, all are removed.
+             // If it is checked, all stay. This fits the "Set" logic.
+        }
+        
+        for (const r of rowsToRemove) {
+             const idx = node.widgets.indexOf(r);
+             if (idx !== -1) node.widgets.splice(idx, 1);
         }
 
-        node._csvRowCounter = (node._csvRowCounter || 0) + 1;
-        const row = new CsvRowWidget("csv_" + node._csvRowCounter);
-        node.addCustomWidget(row);
+        // 2. Add new files
+        // We only add files that aren't already represented? 
+        // Or do we strictly enforce the Set?
+        // Usually "Add" buttons just append. But a "Manager" modal implies syncing state.
+        // Let's look at what's currently in the node (after removal)
+        const remainingFiles = new Set(
+            getRowWidgets(node)
+            .filter(w => w.value.type === "CsvRowWidget" && w.value.file)
+            .map(w => w.value.file)
+        );
 
-        row.value.order = getRowWidgets(node).length;
-        await row.setFile(filename);
+        for (const filename of selection) {
+            if (remainingFiles.has(filename)) continue; 
+
+            node._csvRowCounter = (node._csvRowCounter || 0) + 1;
+            const row = new CsvRowWidget("csv_" + node._csvRowCounter);
+            node.addCustomWidget(row);
+            row.value.order = getRowWidgets(node).length;
+            await row.setFile(filename);
+        }
 
         layoutWidgets(node);
         recomputeNodeSize(node);
         node.setDirtyCanvas(true, true);
-      } catch (e) {
-        console.error(e);
-        toast("error", "File Upload", String(e?.message || e), 4500);
-      }
-    }
 
-    layoutWidgets(node);
-    recomputeNodeSize(node);
-    node.setDirtyCanvas(true, true);
+    } catch (e) {
+        console.error(e);
+        toast("error", "List Files", String(e?.message || e), 4500);
+    }
     return true;
   });
 
@@ -2301,7 +2228,7 @@ class CsvRowWidget {
     return outs.join(" | ");
   }
 
-  async _handlePickFile(node) {
+async _handlePickFile(node) {
     try {
       const files = await listPromptFiles();
       if (!files.length) {
@@ -2309,25 +2236,51 @@ class CsvRowWidget {
         return;
       }
 
-      const picked = await showFilePickerModal(files, this.value.file || "");
-      if (!picked) return;
+      // 收集当前节点中已有的所有文件，用于在列表中打钩
+      const allNodeFiles = getRowWidgets(node)
+          .map(w => w.value.type === "CsvRowWidget" ? w.value.file : null)
+          .filter(Boolean);
 
-      if (hasRowForFilename(node, picked, this)) {
-        const idx = node.widgets.indexOf(this);
-        if (idx !== -1) node.widgets.splice(idx, 1);
+      // 当前行文件，用于高亮显示
+      const currentFile = this.value.file || null;
 
-        layoutWidgets(node);
-        recomputeNodeSize(node);
-        node.setDirtyCanvas(true, true);
+      // 打开模态框：默认 defaultMulti = false (单选/替换模式)
+      // 但用户可以在 UI 中手动切换为多选
+      const pickedArray = await showFilePickerModal(files, allNodeFiles, currentFile, false);
+      
+      if (!pickedArray || pickedArray.length === 0) return;
 
-        toast("warn", "Duplicate entry", "That file is already in the list – removed this entry.", 3500);
-        return;
+      // === 核心修复逻辑开始 ===
+
+      // 1. 使用返回列表中的第一个文件，替换【当前行】的内容
+      const firstFile = pickedArray[0];
+      if (firstFile !== this.value.file) {
+          await this.setFile(firstFile);
       }
 
-      await this.setFile(picked);
+      // 2. 如果用户选择了多个文件，将【剩余的文件】添加为【新行】
+      if (pickedArray.length > 1) {
+          for (let i = 1; i < pickedArray.length; i++) {
+              const extraFile = pickedArray[i];
+              
+              // 类似于主按钮的添加逻辑
+              node._csvRowCounter = (node._csvRowCounter || 0) + 1;
+              const newRow = new CsvRowWidget("csv_" + node._csvRowCounter);
+              node.addCustomWidget(newRow);
+              
+              // 简单的排序标记
+              newRow.value.order = getRowWidgets(node).length; 
+              
+              await newRow.setFile(extraFile);
+          }
+      }
+
+      // === 核心修复逻辑结束 ===
+
       layoutWidgets(node);
       recomputeNodeSize(node);
       node.setDirtyCanvas(true, true);
+      
     } catch (e) {
       console.error(e);
       toast("error", "File Picker", String(e?.message || e), 4500);
