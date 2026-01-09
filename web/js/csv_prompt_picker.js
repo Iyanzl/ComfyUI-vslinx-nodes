@@ -770,46 +770,69 @@ function showFilePickerModal(allFiles, nodeExistingFiles = [], activeFile = null
 // *** 新增功能：全局搜索与预览模态框 ***
 function showActiveRowsSearchModal(rows) {
   return new Promise((resolve) => {
-    // 1. 创建遮罩层和卡片
+    // ... (Existing overlay, card, title, search input, list creation code) ...
+    // ... (Keep: overlay, card, title, search, list creation) ...
     const overlay = document.createElement("div");
     overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:999999;display:flex;align-items:center;justify-content:center;";
     const card = document.createElement("div");
     card.style.cssText = "width:680px;max-width:94vw;max-height:84vh;background:#1f1f1f;border:1px solid #444;border-radius:12px;padding:14px;color:#eee;font-family:sans-serif;box-shadow:0 10px 30px rgba(0,0,0,0.35);display:flex;flex-direction:column;gap:10px;";
 
-    // 2. 标题与搜索框
     const title = document.createElement("div"); title.textContent = "Search in Added Files"; title.style.fontWeight = "600";
     const search = document.createElement("input");
     search.type = "text"; search.placeholder = "Type to search content...";
     search.style.cssText = "padding:10px;border-radius:10px;border:1px solid #555;background:#2b2b2b;color:#eee;outline:none;";
 
-    // 3. 结果列表容器
     const list = document.createElement("div");
     list.style.cssText = "flex:1;overflow-y:auto;border:1px solid #333;border-radius:10px;background:#181818;min-height:200px;";
 
-    // 4. 底部按钮
-    const footer = document.createElement("div"); footer.style.cssText = "display:flex;justify-content:flex-end;gap:8px;";
-    const cancelBtn = document.createElement("button"); cancelBtn.textContent = "Cancel"; 
-    cancelBtn.style.cssText = "padding:8px 14px;border-radius:10px;border:1px solid #555;background:#2b2b2b;color:#eee;cursor:pointer;";
-    const applyBtn = document.createElement("button"); applyBtn.textContent = "Apply Changes"; 
-    applyBtn.style.cssText = "padding:8px 14px;border-radius:10px;border:1px solid #2d7a40;background:#1f3a25;color:#eee;cursor:pointer;font-weight:600;";
+    // --- Start Modified Footer Section ---
+    const footer = document.createElement("div"); 
+    footer.style.cssText = "display:flex;justify-content:space-between;gap:8px;align-items:center;padding-top:4px;";
 
-    // 5. 初始化选中状态 (Map<文件名, Set<Key>>)
+    // Left side container for bulk actions
+    const leftActions = document.createElement("div");
+    leftActions.style.cssText = "display:flex;gap:8px;";
+
+    const btnStyle = "padding:8px 14px;border-radius:10px;border:1px solid #555;cursor:pointer;font-size:12px;";
+
+    const clearAllBtn = document.createElement("button");
+    clearAllBtn.textContent = "Clear All";
+    clearAllBtn.style.cssText = btnStyle + "background:#2b2b2b;color:#e05555;border-color:#552b2b;";
+    
+    const randomAllBtn = document.createElement("button");
+    randomAllBtn.textContent = "Global Random";
+    randomAllBtn.style.cssText = btnStyle + "background:#1f283a;color:#85a3e0;border-color:#2d3a50;";
+
+    leftActions.append(randomAllBtn, clearAllBtn);
+
+    // Right side container for dialog actions
+    const rightActions = document.createElement("div");
+    rightActions.style.cssText = "display:flex;gap:8px;";
+
+    const cancelBtn = document.createElement("button"); cancelBtn.textContent = "Cancel"; 
+    cancelBtn.style.cssText = btnStyle + "background:#2b2b2b;color:#eee;";
+    
+    const applyBtn = document.createElement("button"); applyBtn.textContent = "Apply Changes"; 
+    applyBtn.style.cssText = btnStyle + "border:1px solid #2d7a40;background:#1f3a25;color:#eee;font-weight:600;";
+
+    rightActions.append(cancelBtn, applyBtn);
+    footer.append(leftActions, rightActions);
+    // --- End Modified Footer Section ---
+
+    // ... (Existing pendingSelections initialization) ...
     const pendingSelections = new Map();
     for (const r of rows) {
       if (!r.value.file) continue;
       const keys = new Set();
-      // 使用现有的获取 Key 逻辑
       const existing = r._getKeysEffective ? r._getKeysEffective() : [];
       existing.forEach(k => keys.add(k));
       if (keys.size > 0) pendingSelections.set(r.value.file, keys);
     }
 
-    // 切换选中状态的函数
+    // ... (Existing toggleSelection function) ...
     function toggleSelection(file, key) {
       if (!pendingSelections.has(file)) pendingSelections.set(file, new Set());
       const set = pendingSelections.get(file);
-      
-      // Logic: If selecting "Random", clear others. If selecting normal key and "Random" exists, clear "Random".
       if (set.has(key)) {
         set.delete(key);
       } else {
@@ -821,11 +844,34 @@ function showActiveRowsSearchModal(rows) {
         }
         set.add(key);
       }
-      renderResults(search.value); // 重新渲染以更新勾选状态
+      renderResults(search.value);
     }
 
-    // 渲染列表项的辅助函数
+    clearAllBtn.onclick = () => {
+        const uniqueFiles = new Set(rows.map(r => r.value.file).filter(Boolean));        
+
+        pendingSelections.clear();        
+
+        for (const f of uniqueFiles) {
+            pendingSelections.set(f, new Set());
+        }
+        
+        renderResults(search.value);
+    };
+
+    randomAllBtn.onclick = () => {
+        const uniqueFiles = new Set(rows.map(r => r.value.file).filter(Boolean));
+        for (const f of uniqueFiles) {
+            pendingSelections.set(f, new Set(["Random"]));
+        }
+        renderResults(search.value);
+    };
+    // ------------------------
+
+    // ... (Rest of existing renderItems, renderResults, search logic, etc.) ...
+    
     async function renderItems(itemsByFile) {
+        // ... existing implementation ...
         list.innerHTML = "";
         if (itemsByFile.length === 0) {
             list.innerHTML = '<div style="padding:20px;text-align:center;opacity:0.5;color:#aaa;">No items found.</div>';
@@ -833,28 +879,27 @@ function showActiveRowsSearchModal(rows) {
         }
 
         for (const group of itemsByFile) {
-            // 文件名标题
+            // ... existing header ...
             const header = document.createElement("div");
             header.textContent = group.fn; 
             header.style.cssText = "padding:8px 12px;background:#252525;border-bottom:1px solid #333;font-weight:600;font-size:13px;color:#ccc;";
             list.appendChild(header);
 
-            // 获取该文件的对应关系用于显示副标题(Value)
+            // ... existing map loading ...
             const cachedData = await _vslinxGetFileDataCached(group.fn);
             const map = cachedData.map || {};
 
             for (const key of group.keys) {
+                // ... existing row creation ...
                 const rowEl = document.createElement("div");
                 rowEl.style.cssText = "display:flex;align-items:center;padding:8px 12px 8px 24px;border-bottom:1px solid #222;cursor:pointer;";
                 
                 const isSelected = pendingSelections.has(group.fn) && pendingSelections.get(group.fn).has(key);
                 
-                // 复选框样式
                 const check = document.createElement("div");
                 check.textContent = isSelected ? "✓" : "";
                 check.style.cssText = `width:18px;height:18px;border:${isSelected ? "1px solid #4caf50" : "1px solid #555"};border-radius:4px;margin-right:10px;background:${isSelected ? "#4caf50" : "transparent"};display:flex;align-items:center;justify-content:center;font-size:12px;color:#fff;`;
                 
-                // 内容区域
                 const contentDiv = document.createElement("div");
                 contentDiv.style.cssText = "overflow:hidden;flex:1;";
                 contentDiv.innerHTML = `<div style="color:#ddd;font-size:13px;">${key}</div><div style="color:#888;font-size:11px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${map[key] || ""}</div>`;
@@ -874,25 +919,25 @@ function showActiveRowsSearchModal(rows) {
 
     let searchSeq = 0;
     async function renderResults(queryRaw) {
+      // ... existing logic ...
       const seq = ++searchSeq;
       const q = (queryRaw || "").trim().toLowerCase();
       
-      // *** 核心逻辑：如果没有输入搜索词，显示“已选内容” ***
       if (!q) {
+        // ... existing "Selected items" view ...
         const selectedGroups = [];
         for (const [fn, keys] of pendingSelections.entries()) {
             if (keys.size > 0) {
                 selectedGroups.push({ fn, keys: Array.from(keys) });
             }
         }
-        selectedGroups.sort((a,b) => a.fn.localeCompare(b.fn)); // 按文件名排序
+        selectedGroups.sort((a,b) => a.fn.localeCompare(b.fn)); 
         
         if (seq !== searchSeq) return;
 
         if (selectedGroups.length === 0) {
             list.innerHTML = '<div style="padding:20px;text-align:center;opacity:0.5;color:#aaa;">No items currently selected.<br>Type to search content...</div>';
         } else {
-            // 添加一个提示头
             const viewHeader = document.createElement("div");
             viewHeader.textContent = "Currently Selected Items (Clear search to view):";
             viewHeader.style.cssText = "padding:10px;color:#888;font-size:12px;font-style:italic;background:#1a1a1a;";
@@ -904,15 +949,12 @@ function showActiveRowsSearchModal(rows) {
         return;
       }
       
-      // *** 搜索逻辑 ***
       list.innerHTML = '<div style="padding:20px;text-align:center;opacity:0.5;color:#aaa;">Searching...</div>';
-      // 获取所有行对应的去重文件名
       const uniqueFiles = [...new Set(rows.map(r => r.value.file).filter(Boolean))];
       const results = [];
       for (const fn of uniqueFiles) {
         if (seq !== searchSeq) return;
         try {
-          // 调用原有的搜索函数
           const hits = await _vslinxFindHitsInFile(fn, q);
           if (hits.length) results.push({ fn, keys: hits });
         } catch (_) {}
@@ -926,8 +968,8 @@ function showActiveRowsSearchModal(rows) {
     cancelBtn.onclick = () => { document.body.removeChild(overlay); resolve(null); };
     applyBtn.onclick = () => { document.body.removeChild(overlay); resolve(pendingSelections); };
 
-    card.append(title, search, list, footer); footer.append(cancelBtn, applyBtn); overlay.append(card); document.body.append(overlay);
-    search.focus(); renderResults(""); // 初始渲染
+    card.append(title, search, list, footer); overlay.append(card); document.body.append(overlay);
+    search.focus(); renderResults("");
   });
 }
 
@@ -1678,39 +1720,45 @@ class SearchAndAddWidget {
     this.type = "custom";
     this.value = { type: "SearchAndAddWidget" };
     this.serialize = false; 
-    // 复用原有的 ID 常量，确保布局函数能正确识别位置
     this._vslinx_id = GLOBAL_SEARCH_BUTTON_ID; 
     this._hover = null;
-    this._bounds = { search: [0, 0, 0, 0], add: [0, 0, 0, 0] };
+    // Updated bounds to include comma button
+    this._bounds = { search: [0, 0, 0, 0], comma: [0, 0, 0, 0], add: [0, 0, 0, 0] };
   }
 
-  computeSize() { return [0, 32]; } // 设置稍高一点，方便点击
+  computeSize() { return [0, 32]; }
 
   _hitPart(pos) {
     const x = pos[0];
     const y = pos[1];
     const inRect = (r) => x >= r[0] && x <= r[0] + r[2] && y >= r[1] && y <= r[1] + r[3];
     if (inRect(this._bounds.add)) return "add";
+    if (inRect(this._bounds.comma)) return "comma"; // New hit detection
     if (inRect(this._bounds.search)) return "search";
     return null;
   }
 
   draw(ctx, node, width, y) {
-    const margin = 10; // LIST_SIDE_MARGIN
+    const margin = 10; 
     const h = 32; 
     const w = Math.max(0, width - margin * 2);
     const x = margin;
     
-    // 布局：[ 搜索按钮 (自适应) ] [ 间隔 ] [ + 按钮 (固定方形) ]
+    // Layout: [ Search Button (Auto) ] [ Gap ] [ , Button ] [ Gap ] [ + Button ]
     const btnSize = h; 
     const gap = 8;
-    const searchW = Math.max(0, w - btnSize - gap);
-    const addX = x + searchW + gap;
     
-    // --- 绘制左侧搜索按钮 ---
+    // Calculate widths
+    // We need space for two buttons (comma + add) and two gaps
+    const rightButtonsW = (btnSize * 2) + gap;
+    const searchW = Math.max(0, w - rightButtonsW - gap);
+    
+    const commaX = x + searchW + gap;
+    const addX = commaX + btnSize + gap;
+    
+    // --- 1. Draw Search Button (Left) ---
     ctx.save();
     const isSearchHover = this._hover === "search";
-    // 按钮背景
     ctx.fillStyle = isSearchHover ? "#3a3a3a" : "#2b2b2b"; 
     roundRectPath(ctx, x, y, searchW, h, 6);
     ctx.fill();
@@ -1718,7 +1766,6 @@ class SearchAndAddWidget {
     ctx.lineWidth = 1;
     ctx.stroke();
     
-    // 按钮文字
     ctx.fillStyle = "#eee";
     ctx.font = "13px sans-serif";
     ctx.textAlign = "center";
@@ -1726,26 +1773,44 @@ class SearchAndAddWidget {
     ctx.fillText(GLOBAL_SEARCH_BUTTON_LABEL, x + searchW / 2, y + h / 2);
     ctx.restore();
 
-    // --- 绘制右侧添加 (+) 按钮 ---
+    // --- 2. Draw Comma (,) Button (Middle) ---
+    ctx.save();
+    const isCommaHover = this._hover === "comma";
+    // Black background as requested
+    ctx.fillStyle = isCommaHover ? "#3a3a3a" : "#2b2b2b"; 
+    roundRectPath(ctx, commaX, y, btnSize, h, 6);
+    ctx.fill();
+    ctx.strokeStyle = "#555";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 16px sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    // Slight offset for visual centering of comma
+    ctx.fillText(",", commaX + btnSize / 2, y + h / 2 - 2); 
+    ctx.restore();
+
+    // --- 3. Draw Add (+) Button (Right) ---
     ctx.save();
     const isAddHover = this._hover === "add";
-    ctx.fillStyle = isAddHover ? "#358f4f" : "#2d7a40"; // 绿色
+    ctx.fillStyle = isAddHover ? "#358f4f" : "#2d7a40"; 
     roundRectPath(ctx, addX, y, btnSize, h, 6);
     ctx.fill();
     ctx.strokeStyle = isAddHover ? "#4caf50" : "#1f3a25";
     ctx.lineWidth = 1;
     ctx.stroke();
 
-    // + 图标
     ctx.fillStyle = "#fff";
     ctx.font = "bold 18px sans-serif";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    // 微调 + 号位置
     ctx.fillText("+", addX + btnSize / 2, y + h / 2 + 1);
     ctx.restore();
 
     this._bounds.search = [x, y, searchW, h];
+    this._bounds.comma = [commaX, y, btnSize, h];
     this._bounds.add = [addX, y, btnSize, h];
   }
 
@@ -1755,7 +1820,6 @@ class SearchAndAddWidget {
     const isMove = (t === "pointermove" || t === "mousemove");
     const isLeave = (t === "pointerleave" || t === "mouseleave");
 
-    // 处理悬停效果
     if (isMove) {
         const part = this._hitPart(pos);
         if (this._hover !== part) {
@@ -1775,8 +1839,8 @@ class SearchAndAddWidget {
     if (isDown) {
         const part = this._hitPart(pos);
         
-        // --- 逻辑：点击搜索 ---
         if (part === "search") {
+            // ... (Existing search logic remains unchanged) ...
             (async () => {
                 const rows = getRowWidgets(node).filter(w => w.value.type === "CsvRowWidget");
                 if (!rows.length) { toast("warn", "No CSVs", "Add CSV files first."); return; }
@@ -1800,9 +1864,8 @@ class SearchAndAddWidget {
             return true;
         }
         
-        // --- 逻辑：点击添加 (+) ---
-        if (part === "add") {
-            // 计算唯一名称索引
+        // Combine Add logic for both (+) and (,)
+        if (part === "add" || part === "comma") {
             let maxIdx = 0;
             const allExtras = (node.widgets || []).filter(w => w?.value?.type === "ExtraPromptWidget");
             allExtras.forEach(w => {
@@ -1817,6 +1880,11 @@ class SearchAndAddWidget {
             
             const w = new ExtraPromptWidget(nextName);
             w._vslinx_id = `${EXTRA_PROMPT_ID}_${nextIdx}`;
+
+            // *** Logic for Comma Button ***
+            if (part === "comma") {
+                w.value.text = ",";
+            }
             
             node.addCustomWidget(w);
             layoutWidgets(node);
