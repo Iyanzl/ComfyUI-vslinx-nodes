@@ -222,7 +222,8 @@ async function _vslinxFindHitsInFile(filename, needleRaw) {
 
   for (const lab of (data.labels || [])) {
     const t = String(lab ?? "").trim();
-    if (!t || t === "(None)" || t === "Random") continue;
+    if (!t || t === "(None)" || t === "Random") continue;   
+
     if (_vslinxNorm(t).includes(needle)) {
       const key = _vslinxNorm(t);
       if (!seen.has(key)) {
@@ -231,20 +232,6 @@ async function _vslinxFindHitsInFile(filename, needleRaw) {
       }
     }
   }
-
-  try {
-    for (const [, v] of Object.entries(data.map || {})) {
-      for (const tok of _vslinxSplitCommaTokens(v)) {
-        if (_vslinxNorm(tok).includes(needle)) {
-          const key = _vslinxNorm(tok);
-          if (!seen.has(key)) {
-            seen.add(key);
-            hits.push(tok);
-          }
-        }
-      }
-    }
-  } catch (_) { }
 
   return hits;
 }
@@ -481,33 +468,26 @@ function showConflictModal({ filename, suggested }) {
 
 function showFilePickerModal(allFiles, nodeExistingFiles = [], activeFile = null, defaultMulti = false) {
   return new Promise((resolve) => {
-    // nodeExistingFiles: 当前节点中所有已存在的文件
-    // activeFile: 当前触发的行对应的文件
-    
-    // 初始化多选集合
-    const multiSelected = new Set(nodeExistingFiles); 
+
+    const multiSelected = new Set(nodeExistingFiles);
     let isMulti = defaultMulti;
     let inContentsMode = false;
-    
-    // === 逻辑：自动展开包含已选文件的文件夹 ===
-    const expandedFolders = new Set(); 
-    // 收集所有需要展开的文件路径（包括节点里已有的，和当前高亮的）
+
+    const expandedFolders = new Set();
     const filesToExpand = new Set([...nodeExistingFiles]);
     if (activeFile) filesToExpand.add(activeFile);
 
     for (const f of filesToExpand) {
-        if (!f) continue;
-        const parts = f.split('/');
-        parts.pop(); // 去掉文件名
-        let pathAccumulator = "";
-        for (const folder of parts) {
-            pathAccumulator = pathAccumulator ? `${pathAccumulator}/${folder}` : folder;
-            expandedFolders.add(pathAccumulator);
-        }
+      if (!f) continue;
+      const parts = f.split('/');
+      parts.pop(); 
+      let pathAccumulator = "";
+      for (const folder of parts) {
+        pathAccumulator = pathAccumulator ? `${pathAccumulator}/${folder}` : folder;
+        expandedFolders.add(pathAccumulator);
+      }
     }
-    // =========================================
 
-    // 构建文件树
     function buildFileTree(files) {
       const root = { folders: {}, files: [] };
       for (const f of files) {
@@ -518,8 +498,11 @@ function showFilePickerModal(allFiles, nodeExistingFiles = [], activeFile = null
         for (const folder of parts) {
           pathAccumulator = pathAccumulator ? `${pathAccumulator}/${folder}` : folder;
           if (!current.folders[folder]) {
-            current.folders[folder] = { 
-              name: folder, fullPath: pathAccumulator, folders: {}, files: [] 
+            current.folders[folder] = {
+              name: folder,
+              fullPath: pathAccumulator,
+              folders: {},
+              files: []
             };
           }
           current = current.folders[folder];
@@ -528,8 +511,7 @@ function showFilePickerModal(allFiles, nodeExistingFiles = [], activeFile = null
       }
       return root;
     }
-    
-    // 排序：文件夹优先，字母顺序
+
     function sortTree(node) {
       const folderKeys = Object.keys(node.folders).sort((a, b) => a.localeCompare(b));
       const sortedFolders = folderKeys.map(k => {
@@ -540,7 +522,6 @@ function showFilePickerModal(allFiles, nodeExistingFiles = [], activeFile = null
       return { folders: sortedFolders, files: node.files };
     }
 
-    // UI 构建
     const overlay = document.createElement("div");
     overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:999999;display:flex;align-items:center;justify-content:center;";
 
@@ -561,14 +542,15 @@ function showFilePickerModal(allFiles, nodeExistingFiles = [], activeFile = null
 
     const contentBtn = document.createElement("button");
     contentBtn.textContent = "In Contents?";
+    contentBtn.title = "Search inside CSV contents (Keys only)";
     contentBtn.style.cssText = "padding:0 12px;border-radius:8px;border:1px solid #555;background:#2b2b2b;color:#eee;cursor:pointer;font-size:12px;white-space:nowrap;";
 
     const multiBtn = document.createElement("button");
     multiBtn.style.cssText = "width:38px;height:38px;border-radius:8px;border:1px solid #555;background:#2b2b2b;color:#eee;cursor:pointer;display:grid;place-items:center;padding:0;font-size:16px;";
-    
+
     function updateMultiVisual() {
       if (isMulti) {
-        multiBtn.textContent = "✓"; 
+        multiBtn.textContent = "✓";
         multiBtn.title = "Multi-select ON";
         multiBtn.style.background = "#1f3a25";
         multiBtn.style.borderColor = "#2d7a40";
@@ -583,10 +565,17 @@ function showFilePickerModal(allFiles, nodeExistingFiles = [], activeFile = null
     multiBtn.onclick = () => { isMulti = !isMulti; updateMultiVisual(); renderList(); };
 
     contentBtn.onclick = () => {
-        inContentsMode = !inContentsMode;
-        contentBtn.style.background = inContentsMode ? "#1f3a25" : "#2b2b2b";
-        contentBtn.style.borderColor = inContentsMode ? "#2d7a40" : "#555";
-        renderList();
+      inContentsMode = !inContentsMode;
+      if (inContentsMode) {
+        contentBtn.style.background = "#1f3a25";
+        contentBtn.style.borderColor = "#2d7a40";
+        searchInput.placeholder = "Search content (Keys)...";
+      } else {
+        contentBtn.style.background = "#2b2b2b";
+        contentBtn.style.borderColor = "#555";
+        searchInput.placeholder = "Search filenames...";
+      }
+      renderList();
     };
 
     toolBar.append(searchInput, contentBtn, multiBtn);
@@ -596,165 +585,194 @@ function showFilePickerModal(allFiles, nodeExistingFiles = [], activeFile = null
 
     const footer = document.createElement("div");
     footer.style.cssText = "display:flex;justify-content:flex-end;gap:8px;padding-top:4px;";
-    
+
     const cancelBtn = document.createElement("button");
     cancelBtn.textContent = "Cancel";
     cancelBtn.style.cssText = "padding:8px 14px;border-radius:8px;border:1px solid #555;background:#2b2b2b;color:#eee;cursor:pointer;";
-    
+
     const applyBtn = document.createElement("button");
     applyBtn.textContent = "Apply";
     applyBtn.style.cssText = "padding:8px 14px;border-radius:8px;border:1px solid #2d7a40;background:#1f3a25;color:#eee;cursor:pointer;font-weight:600;";
 
-    // 创建行函数
     function createRow(text, fullPath, isFolder, depth, isMatch = false, subText = "") {
-        const row = document.createElement("div");
-        row.style.cssText = "display:flex;align-items:center;padding:6px 12px;border-bottom:1px solid #222;cursor:pointer;user-select:none;";
-        row.style.paddingLeft = `${12 + depth * 20}px`;
+      const row = document.createElement("div");
+      row.style.cssText = "display:flex;align-items:center;padding:6px 12px;border-bottom:1px solid #222;cursor:pointer;user-select:none;";
+      row.style.paddingLeft = `${12 + depth * 20}px`;
 
-        const isActiveRowFile = (fullPath === activeFile);
-        const isMultiSelected = isMulti && multiSelected.has(fullPath);
-        const isUsedInNode = nodeExistingFiles.includes(fullPath);
+      const isActiveRowFile = (fullPath === activeFile);
+      const isMultiSelected = isMulti && multiSelected.has(fullPath);
+      const isUsedInNode = nodeExistingFiles.includes(fullPath);
 
-        // 背景逻辑
-        if (isActiveRowFile && !isFolder) {
-             row.style.background = "rgba(70, 130, 180, 0.25)"; 
-             row.style.borderLeft = "3px solid #4a90e2";
-             row.style.paddingLeft = `${9 + depth * 20}px`;
-        } else if (isMultiSelected && !isFolder) {
-             row.style.background = "#242e25";
-        }
+      if (isActiveRowFile && !isFolder) {
+        row.style.background = "rgba(70, 130, 180, 0.25)";
+        row.style.borderLeft = "3px solid #4a90e2";
+        row.style.paddingLeft = `${9 + depth * 20}px`;
+      } else if (isMultiSelected && !isFolder) {
+        row.style.background = "#242e25";
+      }
 
-        const iconArea = document.createElement("div");
-        iconArea.style.cssText = "width:20px;height:20px;margin-right:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:12px;color:#888;";
-        
+      const iconArea = document.createElement("div");
+      iconArea.style.cssText = "width:20px;height:20px;margin-right:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:12px;color:#888;";
+
+      if (isFolder) {
+        const isExpanded = expandedFolders.has(fullPath);
+        iconArea.textContent = isExpanded ? "▼" : "▶";
+        iconArea.style.fontSize = "10px";
+        row.style.background = "#1a1a1a";
+        row.style.color = "#ccc";
+      } else {
+        const showCheck = isMulti ? isMultiSelected : isUsedInNode;
+
+        iconArea.style.border = showCheck ? "1px solid #4caf50" : "1px solid #555";
+        iconArea.style.borderRadius = "4px";
+        iconArea.style.background = showCheck ? "rgba(76, 175, 80, 0.2)" : "transparent";
+        iconArea.textContent = showCheck ? "✓" : "";
+        iconArea.style.color = showCheck ? "#4caf50" : "transparent";
+      }
+
+      const textCol = document.createElement("div");
+      textCol.style.cssText = "flex:1;overflow:hidden;";
+
+      const mainText = document.createElement("div");
+      mainText.textContent = text;
+      mainText.style.cssText = "white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#eee;";
+      if (isFolder) mainText.style.fontWeight = "600";
+      if (isActiveRowFile) mainText.style.fontWeight = "700";
+
+      textCol.appendChild(mainText);
+
+      if (subText) {
+        const sub = document.createElement("div");
+        sub.textContent = subText;
+        sub.style.cssText = "font-size:11px;color:#888;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;";
+        textCol.appendChild(sub);
+      }
+
+      row.appendChild(iconArea);
+      row.appendChild(textCol);
+
+      row.onmouseenter = () => { if (!isActiveRowFile && !isMultiSelected) row.style.backgroundColor = "#2a2a2a"; };
+      row.onmouseleave = () => {
+        if (!isActiveRowFile && !isMultiSelected) row.style.backgroundColor = isFolder ? "#1a1a1a" : "transparent";
+        if (isActiveRowFile) row.style.backgroundColor = "rgba(70, 130, 180, 0.25)";
+        if (isMultiSelected && !isActiveRowFile) row.style.backgroundColor = "#242e25";
+      };
+
+      row.onclick = (e) => {
+        e.preventDefault(); e.stopPropagation();
+
         if (isFolder) {
-            const isExpanded = expandedFolders.has(fullPath);
-            iconArea.textContent = isExpanded ? "▼" : "▶";
-            iconArea.style.fontSize = "10px";
-            row.style.background = "#1a1a1a";
-            row.style.color = "#ccc";
+          if (expandedFolders.has(fullPath)) expandedFolders.delete(fullPath);
+          else expandedFolders.add(fullPath);
+          renderList();
+          return;
+        }
+
+        if (isMulti) {
+          if (multiSelected.has(fullPath)) {
+            multiSelected.delete(fullPath);
+          } else {
+            multiSelected.add(fullPath);
+          }
+          renderList();
         } else {
-            // 勾选显示逻辑：多选模式看Set，单选模式看是否已存在
-            const showCheck = isMulti ? isMultiSelected : isUsedInNode;
-            
-            iconArea.style.border = showCheck ? "1px solid #4caf50" : "1px solid #555";
-            iconArea.style.borderRadius = "4px";
-            iconArea.style.background = showCheck ? "rgba(76, 175, 80, 0.2)" : "transparent";
-            iconArea.textContent = showCheck ? "✓" : "";
-            iconArea.style.color = showCheck ? "#4caf50" : "transparent";
+          document.body.removeChild(overlay);
+          resolve({ mode: 'single', files: [fullPath] });
         }
+      };
 
-        const textCol = document.createElement("div");
-        textCol.style.cssText = "flex:1;overflow:hidden;";
-        
-        const mainText = document.createElement("div");
-        mainText.textContent = text;
-        mainText.style.cssText = "white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#eee;";
-        if (isFolder) mainText.style.fontWeight = "600";
-        if (isActiveRowFile) mainText.style.fontWeight = "700";
-        
-        textCol.appendChild(mainText);
-
-        if (subText) {
-            const sub = document.createElement("div");
-            sub.textContent = subText;
-            sub.style.cssText = "font-size:11px;color:#888;margin-top:2px;";
-            textCol.appendChild(sub);
-        }
-
-        row.appendChild(iconArea);
-        row.appendChild(textCol);
-
-        // Hover 逻辑
-        row.onmouseenter = () => { if (!isActiveRowFile && !isMultiSelected) row.style.backgroundColor = "#2a2a2a"; };
-        row.onmouseleave = () => { 
-            if (!isActiveRowFile && !isMultiSelected) row.style.backgroundColor = isFolder ? "#1a1a1a" : "transparent"; 
-            if (isActiveRowFile) row.style.backgroundColor = "rgba(70, 130, 180, 0.25)";
-            if (isMultiSelected && !isActiveRowFile) row.style.backgroundColor = "#242e25";
-        };
-
-        row.onclick = (e) => {
-            e.preventDefault(); e.stopPropagation();
-
-            if (isFolder) {
-                if (expandedFolders.has(fullPath)) expandedFolders.delete(fullPath);
-                else expandedFolders.add(fullPath);
-                renderList();
-                return;
-            }
-
-            if (isMulti) {
-                // 多选模式：仅切换状态
-                if (multiSelected.has(fullPath)) {
-                    multiSelected.delete(fullPath);
-                } else {
-                    multiSelected.add(fullPath);
-                }
-                renderList();
-            } else {
-                // 单选模式：点击即确认替换
-                // 返回明确的 mode: 'single'
-                document.body.removeChild(overlay);
-                resolve({ mode: 'single', files: [fullPath] });
-            }
-        };
-
-        return row;
+      return row;
     }
 
     function renderTree(container, node, depth) {
-        const sorted = sortTree(node);
-        for (const folder of sorted.folders) {
-            container.appendChild(createRow(folder.name, folder.fullPath, true, depth));
-            if (expandedFolders.has(folder.fullPath)) {
-                renderTree(container, folder, depth + 1);
-            }
+      const sorted = sortTree(node);
+      for (const folder of sorted.folders) {
+        container.appendChild(createRow(folder.name, folder.fullPath, true, depth));
+        if (expandedFolders.has(folder.fullPath)) {
+          renderTree(container, folder, depth + 1);
         }
-        for (const file of sorted.files) {
-            container.appendChild(createRow(file.name, file.fullPath, false, depth));
-        }
+      }
+      for (const file of sorted.files) {
+        container.appendChild(createRow(file.name, file.fullPath, false, depth));
+      }
     }
 
     let renderSeq = 0;
     async function renderList() {
-        const seq = ++renderSeq;
-        const qRaw = searchInput.value.trim();
-        const q = qRaw.toLowerCase();
-        
-        listContainer.innerHTML = "";
+      const mySeq = ++renderSeq;
+      const qRaw = searchInput.value.trim();
+      const q = qRaw.toLowerCase();
 
-        if (inContentsMode && qRaw) {
-             // 内容搜索模式逻辑（省略细节，保持原样）
-             // ...
-             // 在内容搜索时点击文件，也应遵循 row.onclick 的逻辑
-             // (此处简化，建议直接复用 createRow)
+      listContainer.innerHTML = "";
+
+      if (inContentsMode && qRaw) {
+        const loading = document.createElement("div");
+        loading.textContent = "Searching keys in all files...";
+        loading.style.cssText = "padding:20px;text-align:center;color:#aaa;opacity:0.6;";
+        listContainer.appendChild(loading);
+
+        const results = [];
+        for (const fn of allFiles) {
+          if (mySeq !== renderSeq) return; 
+          try {
+            const hits = await _vslinxFindHitsInFile(fn, qRaw);
+            if (hits && hits.length) results.push({ fn, hits });
+          } catch (e) {
+            console.error(e);
+          }
         }
 
-        // 简化的平铺搜索
-        if (!inContentsMode && qRaw) {
-            const filtered = allFiles.filter(f => f.toLowerCase().includes(q));
-            // 排序...
-            filtered.forEach(fn => {
-                listContainer.appendChild(createRow(fn, fn, false, 0));
-            });
-            return;
+        if (mySeq !== renderSeq) return;
+
+        listContainer.innerHTML = ""; 
+
+        if (!results.length) {
+          const empty = document.createElement("div");
+          empty.textContent = "No matching keys found.";
+          empty.style.cssText = "padding:20px;text-align:center;color:#aaa;opacity:0.6;";
+          listContainer.appendChild(empty);
+          return;
         }
 
-        // 默认树形视图
-        const root = buildFileTree(allFiles);
-        renderTree(listContainer, root, 0);
+        for (const r of results) {
+          const sub = r.hits.slice(0, 3).join(", ") + (r.hits.length > 3 ? "..." : "");
+          const row = createRow(r.fn, r.fn, false, 0, true, sub);
+          listContainer.appendChild(row);
+        }
+        return;
+      }
+
+      if (!inContentsMode && qRaw) {
+        const filtered = allFiles.filter(f => f.toLowerCase().includes(q));
+        if (filtered.length === 0) {
+           const empty = document.createElement("div");
+           empty.textContent = "No matching filenames.";
+           empty.style.cssText = "padding:20px;text-align:center;color:#aaa;opacity:0.6;";
+           listContainer.appendChild(empty);
+        } else {
+           filtered.forEach(fn => {
+             listContainer.appendChild(createRow(fn, fn, false, 0, true));
+           });
+        }
+        return;
+      }
+
+      const root = buildFileTree(allFiles);
+      renderTree(listContainer, root, 0);
     }
-    
-    // 输入去抖
+
     let debounceTimer;
-    searchInput.oninput = () => { clearTimeout(debounceTimer); debounceTimer = setTimeout(renderList, 300); };
-    
+    searchInput.oninput = () => {
+      clearTimeout(debounceTimer);
+      const delay = inContentsMode ? 400 : 200;
+      debounceTimer = setTimeout(renderList, delay);
+    };
+
     cancelBtn.onclick = () => { document.body.removeChild(overlay); resolve(null); };
-    
-    // 应用按钮：明确返回 mode: 'multi'
-    applyBtn.onclick = () => { 
-        document.body.removeChild(overlay); 
-        resolve({ mode: 'multi', files: Array.from(multiSelected) }); 
+
+    applyBtn.onclick = () => {
+      document.body.removeChild(overlay);
+      resolve({ mode: 'multi', files: Array.from(multiSelected) });
     };
 
     footer.append(cancelBtn, applyBtn);
@@ -767,11 +785,8 @@ function showFilePickerModal(allFiles, nodeExistingFiles = [], activeFile = null
   });
 }
 
-// *** 新增功能：全局搜索与预览模态框 ***
 function showActiveRowsSearchModal(rows) {
   return new Promise((resolve) => {
-    // ... (Existing overlay, card, title, search input, list creation code) ...
-    // ... (Keep: overlay, card, title, search, list creation) ...
     const overlay = document.createElement("div");
     overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:999999;display:flex;align-items:center;justify-content:center;";
     const card = document.createElement("div");
@@ -785,11 +800,9 @@ function showActiveRowsSearchModal(rows) {
     const list = document.createElement("div");
     list.style.cssText = "flex:1;overflow-y:auto;border:1px solid #333;border-radius:10px;background:#181818;min-height:200px;";
 
-    // --- Start Modified Footer Section ---
     const footer = document.createElement("div"); 
     footer.style.cssText = "display:flex;justify-content:space-between;gap:8px;align-items:center;padding-top:4px;";
 
-    // Left side container for bulk actions
     const leftActions = document.createElement("div");
     leftActions.style.cssText = "display:flex;gap:8px;";
 
@@ -805,7 +818,6 @@ function showActiveRowsSearchModal(rows) {
 
     leftActions.append(randomAllBtn, clearAllBtn);
 
-    // Right side container for dialog actions
     const rightActions = document.createElement("div");
     rightActions.style.cssText = "display:flex;gap:8px;";
 
@@ -817,9 +829,7 @@ function showActiveRowsSearchModal(rows) {
 
     rightActions.append(cancelBtn, applyBtn);
     footer.append(leftActions, rightActions);
-    // --- End Modified Footer Section ---
 
-    // ... (Existing pendingSelections initialization) ...
     const pendingSelections = new Map();
     for (const r of rows) {
       if (!r.value.file) continue;
@@ -829,7 +839,6 @@ function showActiveRowsSearchModal(rows) {
       if (keys.size > 0) pendingSelections.set(r.value.file, keys);
     }
 
-    // ... (Existing toggleSelection function) ...
     function toggleSelection(file, key) {
       if (!pendingSelections.has(file)) pendingSelections.set(file, new Set());
       const set = pendingSelections.get(file);
@@ -866,12 +875,9 @@ function showActiveRowsSearchModal(rows) {
         }
         renderResults(search.value);
     };
-    // ------------------------
 
-    // ... (Rest of existing renderItems, renderResults, search logic, etc.) ...
     
     async function renderItems(itemsByFile) {
-        // ... existing implementation ...
         list.innerHTML = "";
         if (itemsByFile.length === 0) {
             list.innerHTML = '<div style="padding:20px;text-align:center;opacity:0.5;color:#aaa;">No items found.</div>';
@@ -879,18 +885,15 @@ function showActiveRowsSearchModal(rows) {
         }
 
         for (const group of itemsByFile) {
-            // ... existing header ...
             const header = document.createElement("div");
             header.textContent = group.fn; 
             header.style.cssText = "padding:8px 12px;background:#252525;border-bottom:1px solid #333;font-weight:600;font-size:13px;color:#ccc;";
             list.appendChild(header);
 
-            // ... existing map loading ...
             const cachedData = await _vslinxGetFileDataCached(group.fn);
             const map = cachedData.map || {};
 
             for (const key of group.keys) {
-                // ... existing row creation ...
                 const rowEl = document.createElement("div");
                 rowEl.style.cssText = "display:flex;align-items:center;padding:8px 12px 8px 24px;border-bottom:1px solid #222;cursor:pointer;";
                 
@@ -919,12 +922,10 @@ function showActiveRowsSearchModal(rows) {
 
     let searchSeq = 0;
     async function renderResults(queryRaw) {
-      // ... existing logic ...
       const seq = ++searchSeq;
       const q = (queryRaw || "").trim().toLowerCase();
       
       if (!q) {
-        // ... existing "Selected items" view ...
         const selectedGroups = [];
         for (const [fn, keys] of pendingSelections.entries()) {
             if (keys.size > 0) {
